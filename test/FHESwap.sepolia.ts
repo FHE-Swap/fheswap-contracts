@@ -1,4 +1,4 @@
-import { FHESwapSimple, ConfidentialFungibleTokenMintableBurnable } from "../types";
+import { FHESwap, ConfidentialFungibleTokenMintableBurnable } from "../types";
 import { FhevmType } from "@fhevm/hardhat-plugin";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { expect } from "chai";
@@ -45,7 +45,7 @@ describe("FHESwap on Sepolia", function () {
   let tokenB: ConfidentialFungibleTokenMintableBurnable;
   let tokenAAddress: string;
   let tokenBAddress: string;
-  let fHeSwap: FHESwapSimple;
+  let fHeSwap: FHESwap;
   let fHeSwapAddress: string;
   let initialReserveAmountA: bigint;
   let initialReserveAmountB: bigint;
@@ -93,7 +93,7 @@ describe("FHESwap on Sepolia", function () {
 
       const fHeSwapDeployment = await deployments.get("FHESwap");
       fHeSwapAddress = fHeSwapDeployment.address;
-      fHeSwap = (await ethers.getContractAt("FHESwapSimple", fHeSwapAddress)) as FHESwapSimple;
+      fHeSwap = (await ethers.getContractAt("FHESwap", fHeSwapAddress)) as FHESwap;
       console.log(`✅ Connected to FHESwap: ${fHeSwapAddress}`);
     } catch (error) {
       console.error("❌ Failed to connect to deployed contracts:", error);
@@ -187,8 +187,8 @@ describe("FHESwap on Sepolia", function () {
     const encryptedAmount0 = await fhevm.createEncryptedInput(fHeSwapAddress, owner.address).add64(initialReserveAmountA).encrypt();
     const encryptedAmount1 = await fhevm.createEncryptedInput(fHeSwapAddress, owner.address).add64(initialReserveAmountB).encrypt();
 
-    const mintTx = await retryOperation("FHESwapSimple.addLiquidity send", () =>
-      fHeSwap.connect(owner).addLiquidity(
+    const mintTx = await retryOperation("FHESwap.mint send", () =>
+      fHeSwap.connect(owner).mint(
         encryptedAmount0.handles[0],
         encryptedAmount0.inputProof,
         encryptedAmount1.handles[0],
@@ -196,8 +196,8 @@ describe("FHESwap on Sepolia", function () {
         { gasLimit: 1_900_000 }
       )
     );
-    const mintTxReceipt = await retryOperation("FHESwapSimple.addLiquidity wait", () => mintTx.wait());
-    console.log(`✅ addLiquidity completed. Gas used: ${mintTxReceipt?.gasUsed}`);
+    const mintTxReceipt = await retryOperation("FHESwap.mint wait", () => mintTx.wait());
+    console.log(`✅ mint completed. Gas used: ${mintTxReceipt?.gasUsed}`);
 
     console.log("Verify reserves:");
     const encryptedReserve0 = await fHeSwap.getEncryptedReserve0();
@@ -309,7 +309,7 @@ describe("FHESwap on Sepolia", function () {
       aliceTokenBDecrypted = await fhevm.userDecryptEuint(FhevmType.euint64, ethers.hexlify(aliceTokenBBalanceAfter), tokenBAddress, alice);
     } catch (error) {
       console.log("⚠️ Failed to decrypt Alice TokenB balance, use expected value:", error.message);
-      aliceTokenBDecrypted = expectedClearAmountOut;
+      aliceTokenBDecrypted = BigInt(expectedClearAmountOut);
     }
 
     console.log(`Alice TokenA balance: ${ethers.formatUnits(aliceTokenADecrypted, 6)}`);
@@ -329,5 +329,213 @@ describe("FHESwap on Sepolia", function () {
 
     console.log("✅ Balance verification passed");
     console.log("--- Sepolia swap test passed ---\n");
+  });
+
+  it("should allow owner to pause and unpause the contract", async function () {
+    console.log("--- Test: Pause/Unpause functionality ---");
+    const owner = signers.deployer;
+
+    // Check initial state
+    expect(await fHeSwap.isPaused()).to.be.false;
+    console.log("✅ Contract is initially unpaused");
+
+    // Test pause
+    const pauseTx = await fHeSwap.connect(owner).pause();
+    await pauseTx.wait();
+    expect(await fHeSwap.isPaused()).to.be.true;
+    console.log("✅ Contract paused successfully");
+
+    // Test that operations are blocked when paused
+    const alice = signers.alice;
+    const testAmount = ethers.parseUnits("1", 6);
+    const encryptedAmount = await fhevm.createEncryptedInput(fHeSwapAddress, alice.address).add64(testAmount).encrypt();
+
+    try {
+      await fHeSwap.connect(alice).mint(
+        encryptedAmount.handles[0],
+        encryptedAmount.inputProof,
+        encryptedAmount.handles[0],
+        encryptedAmount.inputProof
+      );
+      expect.fail("Should have thrown when trying to mint while paused");
+    } catch (error: any) {
+      expect(error.message).to.include("Contract is paused");
+      console.log("✅ Mint correctly blocked when paused");
+    }
+
+    // Test unpause
+    const unpauseTx = await fHeSwap.connect(owner).unpause();
+    await unpauseTx.wait();
+    expect(await fHeSwap.isPaused()).to.be.false;
+    console.log("✅ Contract unpaused successfully");
+
+    console.log("--- Pause/Unpause test passed ---\n");
+  });
+
+  it("should allow owner to manage swap fees", async function () {
+    console.log("--- Test: Fee management functionality ---");
+    const owner = signers.deployer;
+
+    // Check initial fee
+    const initialFee = await fHeSwap.getSwapFee();
+    expect(initialFee).to.equal(30); // 0.3% default
+    console.log(`✅ Initial fee: ${initialFee} basis points (${initialFee/100}%)`);
+
+    // Test setting new fee
+    const newFee = 50; // 0.5%
+    const setFeeTx = await fHeSwap.connect(owner).setSwapFee(newFee);
+    await setFeeTx.wait();
+    
+    const updatedFee = await fHeSwap.getSwapFee();
+    expect(updatedFee).to.equal(newFee);
+    console.log(`✅ Fee updated to: ${updatedFee} basis points (${updatedFee/100}%)`);
+
+    // Test fee limits
+    const maxFee = await fHeSwap.getMaxFee();
+    expect(maxFee).to.equal(1000); // 10%
+    console.log(`✅ Max fee limit: ${maxFee} basis points (${maxFee/100}%)`);
+
+    const feeDenominator = await fHeSwap.getFeeDenominator();
+    expect(feeDenominator).to.equal(10000);
+    console.log(`✅ Fee denominator: ${feeDenominator}`);
+
+    // Test setting fee too high (should fail)
+    try {
+      await fHeSwap.connect(owner).setSwapFee(maxFee + 1);
+      expect.fail("Should have thrown when setting fee too high");
+    } catch (error: any) {
+      expect(error.message).to.include("Fee too high");
+      console.log("✅ Fee limit correctly enforced");
+    }
+
+    // Reset fee to original
+    await fHeSwap.connect(owner).setSwapFee(initialFee);
+    console.log("✅ Fee reset to original value");
+
+    console.log("--- Fee management test passed ---\n");
+  });
+
+  it("should allow liquidity removal (burn)", async function () {
+    console.log("--- Test: Liquidity removal functionality ---");
+    const owner = signers.deployer;
+
+    // Check that reserves are initialized
+    const reservesInitialized = await fHeSwap.areReservesInitialized();
+    expect(reservesInitialized).to.be.true;
+    console.log("✅ Reserves are initialized");
+
+    // Get current reserves
+    const encryptedReserve0 = await fHeSwap.getEncryptedReserve0();
+    const encryptedReserve1 = await fHeSwap.getEncryptedReserve1();
+
+    const decryptedReserve0 = await fhevm.userDecryptEuint(FhevmType.euint64, ethers.hexlify(encryptedReserve0), fHeSwapAddress, owner);
+    const decryptedReserve1 = await fhevm.userDecryptEuint(FhevmType.euint64, ethers.hexlify(encryptedReserve1), fHeSwapAddress, owner);
+
+    console.log(`Current reserves - TokenA: ${ethers.formatUnits(decryptedReserve0, 6)}, TokenB: ${ethers.formatUnits(decryptedReserve1, 6)}`);
+
+    // Remove partial liquidity (50% of reserves)
+    const removeAmount0 = decryptedReserve0 / 2n;
+    const removeAmount1 = decryptedReserve1 / 2n;
+
+    console.log(`Removing liquidity - TokenA: ${ethers.formatUnits(removeAmount0, 6)}, TokenB: ${ethers.formatUnits(removeAmount1, 6)}`);
+
+    const encryptedRemoveAmount0 = await fhevm.createEncryptedInput(fHeSwapAddress, owner.address).add64(removeAmount0).encrypt();
+    const encryptedRemoveAmount1 = await fhevm.createEncryptedInput(fHeSwapAddress, owner.address).add64(removeAmount1).encrypt();
+
+    const burnTx = await retryOperation("FHESwap.burn send", () =>
+      fHeSwap.connect(owner).burn(
+        encryptedRemoveAmount0.handles[0],
+        encryptedRemoveAmount0.inputProof,
+        encryptedRemoveAmount1.handles[0],
+        encryptedRemoveAmount1.inputProof,
+        owner.address,
+        { gasLimit: 1_900_000 }
+      )
+    );
+    const burnTxReceipt = await retryOperation("FHESwap.burn wait", () => burnTx.wait());
+    console.log(`✅ burn completed. Gas used: ${burnTxReceipt?.gasUsed}`);
+
+    // Verify reserves were updated
+    const newEncryptedReserve0 = await fHeSwap.getEncryptedReserve0();
+    const newEncryptedReserve1 = await fHeSwap.getEncryptedReserve1();
+
+    const newDecryptedReserve0 = await fhevm.userDecryptEuint(FhevmType.euint64, ethers.hexlify(newEncryptedReserve0), fHeSwapAddress, owner);
+    const newDecryptedReserve1 = await fhevm.userDecryptEuint(FhevmType.euint64, ethers.hexlify(newEncryptedReserve1), fHeSwapAddress, owner);
+
+    console.log(`New reserves - TokenA: ${ethers.formatUnits(newDecryptedReserve0, 6)}, TokenB: ${ethers.formatUnits(newDecryptedReserve1, 6)}`);
+
+    expect(newDecryptedReserve0).to.equal(decryptedReserve0 - removeAmount0);
+    expect(newDecryptedReserve1).to.equal(decryptedReserve1 - removeAmount1);
+    console.log("✅ Reserves correctly updated after liquidity removal");
+
+    console.log("--- Liquidity removal test passed ---\n");
+  });
+
+  it("should provide additional view functions", async function () {
+    console.log("--- Test: Additional view functions ---");
+
+    // Test token addresses
+    const token0Address = await fHeSwap.getToken0();
+    const token1Address = await fHeSwap.getToken1();
+    expect(token0Address).to.equal(tokenAAddress);
+    expect(token1Address).to.equal(tokenBAddress);
+    console.log(`✅ Token0: ${token0Address}, Token1: ${token1Address}`);
+
+    // Test pause state
+    const isPaused = await fHeSwap.isPaused();
+    expect(isPaused).to.be.false;
+    console.log(`✅ Contract is not paused: ${isPaused}`);
+
+    // Test fee constants
+    const maxFee = await fHeSwap.getMaxFee();
+    const feeDenominator = await fHeSwap.getFeeDenominator();
+    expect(maxFee).to.equal(1000);
+    expect(feeDenominator).to.equal(10000);
+    console.log(`✅ Max fee: ${maxFee}, Fee denominator: ${feeDenominator}`);
+
+    // Test reserves initialization
+    const reservesInitialized = await fHeSwap.areReservesInitialized();
+    expect(reservesInitialized).to.be.true;
+    console.log(`✅ Reserves are initialized: ${reservesInitialized}`);
+
+    console.log("--- Additional view functions test passed ---\n");
+  });
+
+  it("should handle emergency functions when paused", async function () {
+    console.log("--- Test: Emergency functions ---");
+    const owner = signers.deployer;
+
+    // Pause the contract first
+    const pauseTx = await fHeSwap.connect(owner).pause();
+    await pauseTx.wait();
+    expect(await fHeSwap.isPaused()).to.be.true;
+    console.log("✅ Contract paused for emergency test");
+
+    // Test emergency withdraw (this should emit event but not actually withdraw)
+    const emergencyTx = await fHeSwap.connect(owner).emergencyWithdraw(tokenAAddress, 1000);
+    await emergencyTx.wait();
+    console.log("✅ Emergency withdraw function called (event emitted)");
+
+    // Test that emergency functions can only be called by owner
+    const alice = signers.alice;
+    try {
+      await fHeSwap.connect(alice).emergencyWithdraw(tokenAAddress, 1000);
+      expect.fail("Should have thrown when non-owner tries emergency withdraw");
+    } catch (error: any) {
+      expect(error.message).to.include("Ownable");
+      console.log("✅ Emergency functions correctly restricted to owner");
+    }
+
+    // Test that emergency functions can only be called when paused
+    await fHeSwap.connect(owner).unpause();
+    try {
+      await fHeSwap.connect(owner).emergencyWithdraw(tokenAAddress, 1000);
+      expect.fail("Should have thrown when trying emergency withdraw while unpaused");
+    } catch (error: any) {
+      expect(error.message).to.include("Contract is not paused");
+      console.log("✅ Emergency functions correctly restricted to paused state");
+    }
+
+    console.log("--- Emergency functions test passed ---\n");
   });
 });
