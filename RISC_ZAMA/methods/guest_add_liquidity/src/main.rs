@@ -123,7 +123,7 @@ fn main() {
     if !input.is_first_add {
           
         let expected_amount1 = (input.amount0 * input.reserve1) / input.reserve0;
-        let ratio_tolerance = expected_amount1 / 100; // 1% 容差
+        let ratio_tolerance = expected_amount1 / 100; 
         assert!(
             input.amount1 >= expected_amount1.saturating_sub(ratio_tolerance) &&
             input.amount1 <= expected_amount1.saturating_add(ratio_tolerance),
