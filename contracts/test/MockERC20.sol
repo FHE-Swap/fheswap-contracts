@@ -6,17 +6,17 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
  * @title MockERC20
- * @dev 用于测试的模拟ERC20代币合约
- *      支持自定义小数位数和铸造功能
+ * @dev Mock ERC20 token contract for testing
+ *      Supports custom decimals and minting functionality
  */
 contract MockERC20 is ERC20 {
     uint8 private _decimals;
 
     /**
-     * @dev 构造函数
-     * @param name_ 代币名称
-     * @param symbol_ 代币符号
-     * @param decimals_ 小数位数
+     * @dev Constructor
+     * @param name_ Token name
+     * @param symbol_ Token symbol
+     * @param decimals_ Decimal places
      */
     constructor(
         string memory name_,
@@ -27,25 +27,25 @@ contract MockERC20 is ERC20 {
     }
 
     /**
-     * @dev 返回代币的小数位数
+     * @dev Returns the number of decimals for the token
      */
     function decimals() public view virtual override returns (uint8) {
         return _decimals;
     }
 
     /**
-     * @dev 铸造代币（仅用于测试）
-     * @param to 接收者地址
-     * @param amount 铸造数量
+     * @dev Mint tokens (for testing only)
+     * @param to Recipient address
+     * @param amount Amount to mint
      */
     function mint(address to, uint256 amount) public {
         _mint(to, amount);
     }
 
     /**
-     * @dev 销毁代币（仅用于测试）
-     * @param from 销毁者地址
-     * @param amount 销毁数量
+     * @dev Burn tokens (for testing only)
+     * @param from Address to burn from
+     * @param amount Amount to burn
      */
     function burn(address from, uint256 amount) public {
         _burn(from, amount);

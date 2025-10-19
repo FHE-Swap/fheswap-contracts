@@ -12,43 +12,43 @@ import {IERC20Wrapper} from "../confidential-tokens/extensions/IERC20Wrapper.sol
 
 /**
  * @title MockERC20Wrapper
- * @dev 用于测试的ERC20包装器，支持Mock解密回调
- *      继承ERC20Wrapper的所有功能，但添加了测试专用的Mock功能
+ * @dev ERC20 wrapper for testing, supports mock decryption callbacks
+ *      Inherits all functionality of ERC20Wrapper, but adds test-specific mock features
  */
 contract MockERC20Wrapper is ERC7984, SepoliaConfig {
     using SafeERC20 for IERC20;
 
-    // 底层 ERC20 代币合约
+    // Underlying ERC20 token contract
     IERC20 private immutable _underlying;
     
-    // 包装汇率：rate 个 ERC20 代币 = 1 个机密代币
+    // Wrapping rate: rate ERC20 tokens = 1 confidential token
     uint256 private immutable _rate;
     
-    // 底层代币的小数位数
+    // Decimal places of the underlying token
     uint8 private immutable _underlyingDecimals;
     
-    // 去包装请求映射
+    // Unwrap request mapping
     mapping(uint256 requestID => address user) private _unwrapRequests;
     
-    // Mock测试专用：记录最后一个请求ID
+    // Mock test specific: record last request ID
     uint256 private _lastRequestID;
 
-    // 事件定义
+    // Event definitions
     event Wrapped(address indexed user, uint256 amount, euint64 wrappedAmount);
     event Unwrapped(address indexed user, euint64 amount, uint256 unwrappedAmount);
 
-    // 错误定义
+    // Error definitions
     error InvalidAmount();
     error InvalidRate();
     error UnwrapRequestNotFound();
     error InvalidUnderlyingToken();
 
     /**
-     * @dev 构造函数
-     * @param underlying_ 底层 ERC20 代币地址
-     * @param name_ 机密代币名称
-     * @param symbol_ 机密代币符号
-     * @param rate_ 包装汇率（rate 个 ERC20 = 1 个机密代币）
+     * @dev Constructor
+     * @param underlying_ Underlying ERC20 token address
+     * @param name_ Confidential token name
+     * @param symbol_ Confidential token symbol
+     * @param rate_ Wrapping rate (rate ERC20 = 1 confidential token)
      */
     constructor(
         address underlying_,
@@ -62,47 +62,47 @@ contract MockERC20Wrapper is ERC7984, SepoliaConfig {
         _underlying = IERC20(underlying_);
         _rate = rate_;
         
-        // 获取底层代币的小数位数
+        // Get decimal places of the underlying token
         try IERC20Metadata(address(_underlying)).decimals() returns (uint8 decimals) {
             _underlyingDecimals = decimals;
         } catch {
-            _underlyingDecimals = 18; // 默认值
+            _underlyingDecimals = 18; // Default value
         }
     }
 
     /**
-     * @dev 获取底层 ERC20 代币地址
+     * @dev Get underlying ERC20 token address
      */
     function underlying() public view returns (address) {
         return address(_underlying);
     }
 
     /**
-     * @dev 获取包装汇率
+     * @dev Get wrapping rate
      */
     function rate() public view returns (uint256) {
         return _rate;
     }
 
     /**
-     * @dev 获取底层代币的小数位数
+     * @dev Get decimal places of the underlying token
      */
     function underlyingDecimals() public view returns (uint8) {
         return _underlyingDecimals;
     }
 
     /**
-     * @dev 将 ERC20 代币包装为机密代币
-     * @param to 接收机密代币的地址
-     * @param amount 要包装的 ERC20 代币数量
+     * @dev Wrap ERC20 tokens into confidential tokens
+     * @param to Address to receive confidential tokens
+     * @param amount Amount of ERC20 tokens to wrap
      */
     function wrap(address to, uint256 amount) public {
         if (amount == 0) revert InvalidAmount();
         
-        // 从用户转移 ERC20 代币到合约
+        // Transfer ERC20 tokens from user to contract
         _underlying.safeTransferFrom(msg.sender, address(this), amount);
         
-        // 铸造机密代币：amount / rate 个机密代币
+        // Mint confidential tokens: amount / rate confidential tokens
         uint256 confidentialAmount = amount / _rate;
         if (confidentialAmount == 0) revert InvalidAmount();
         
@@ -113,124 +113,124 @@ contract MockERC20Wrapper is ERC7984, SepoliaConfig {
     }
 
     /**
-     * @dev 将机密代币去包装为 ERC20 代币
-     * @param from 机密代币发送者地址
-     * @param amount 要去包装的机密代币数量
+     * @dev Unwrap confidential tokens to ERC20 tokens
+     * @param from Confidential token sender address
+     * @param amount Amount of confidential tokens to unwrap
      */
     function unwrap(address from, address /* to */, euint64 amount) public {
-        // 验证调用者权限
+        // Verify caller permissions
         require(FHE.isAllowed(amount, msg.sender), "Unauthorized amount access");
         require(msg.sender == from || isOperator(from, msg.sender), "Not authorized");
         
-        // 准备解密请求
+        // Prepare decryption request
         bytes32[] memory cts = new bytes32[](1);
         cts[0] = FHE.toBytes32(amount);
         
-        // 请求解密
+        // Request decryption
         uint256 requestID = FHE.requestDecryption(cts, this.finalizeUnwrap.selector);
         
-        // 记录去包装请求和请求ID（Mock测试专用）
+        // Record unwrap request and request ID (mock test specific)
         _unwrapRequests[requestID] = from;
         _lastRequestID = requestID;
         
-        // 销毁机密代币（暂时，如果解密失败会恢复）
+        // Burn confidential tokens (temporarily, will be restored if decryption fails)
         _burn(from, amount);
     }
 
     /**
-     * @dev 完成去包装请求的回调函数
-     * @param requestID 请求 ID
-     * @param cleartexts 解密的明文数据
-     * @param decryptionProof 解密证明
+     * @dev Callback function to finalize unwrap request
+     * @param requestID Request ID
+     * @param cleartexts Decrypted plaintext data
+     * @param decryptionProof Decryption proof
      */
     function finalizeUnwrap(uint256 requestID, bytes memory cleartexts, bytes memory decryptionProof) public {
-        // 验证签名（在测试环境中跳过）
+        // Verify signature (skipped in test environment)
         // FHE.checkSignatures(requestID, cleartexts, decryptionProof);
         
-        // 解码解密的金额
+        // Decode decrypted amount
         uint64 amount = abi.decode(cleartexts, (uint64));
         
-        // 获取请求用户
+        // Get requesting user
         address user = _unwrapRequests[requestID];
         if (user == address(0)) revert UnwrapRequestNotFound();
         
-        // 计算 ERC20 代币数量
+        // Calculate ERC20 token amount
         uint256 unwrappedAmount = uint256(amount) * _rate;
         
-        // 检查合约余额是否足够
+        // Check if contract balance is sufficient
         uint256 contractBalance = _underlying.balanceOf(address(this));
         if (contractBalance < unwrappedAmount) {
             revert("Insufficient contract balance for unwrap");
         }
         
-        // 转移 ERC20 代币给用户
+        // Transfer ERC20 tokens to user
         _underlying.safeTransfer(user, unwrappedAmount);
         
-        // 清理请求记录
+        // Clear request record
         delete _unwrapRequests[requestID];
         
         emit Unwrapped(user, FHE.asEuint64(uint64(amount)), unwrappedAmount);
     }
 
     /**
-     * @dev Mock测试专用：获取最后一个请求ID
+     * @dev Mock test specific: get last request ID
      */
     function getLastRequestID() public view returns (uint256) {
         return _lastRequestID;
     }
 
     /**
-     * @dev Mock测试专用：模拟解密响应
-     * @param requestID 请求ID
-     * @param amount 解密的金额
+     * @dev Mock test specific: simulate decryption response
+     * @param requestID Request ID
+     * @param amount Decrypted amount
      */
     function mockDecryptResponse(uint256 requestID, uint256 amount) public {
-        // 直接调用内部解包逻辑，跳过FHE验证
+        // Directly call internal unwrap logic, skip FHE verification
         _mockFinalizeUnwrap(requestID, amount);
     }
 
     /**
-     * @dev Mock测试专用：内部解包逻辑
-     * @param requestID 请求ID
-     * @param amount 解密的金额
+     * @dev Mock test specific: internal unwrap logic
+     * @param requestID Request ID
+     * @param amount Decrypted amount
      */
     function _mockFinalizeUnwrap(uint256 requestID, uint256 amount) internal {
-        // 获取请求用户
+        // Get requesting user
         address user = _unwrapRequests[requestID];
         if (user == address(0)) revert UnwrapRequestNotFound();
         
-        // 计算 ERC20 代币数量
+        // Calculate ERC20 token amount
         uint256 unwrappedAmount = amount * _rate;
         
-        // 检查合约余额是否足够
+        // Check if contract balance is sufficient
         uint256 contractBalance = _underlying.balanceOf(address(this));
         if (contractBalance < unwrappedAmount) {
             revert("Insufficient contract balance for unwrap");
         }
         
-        // 转移 ERC20 代币给用户
+        // Transfer ERC20 tokens to user
         _underlying.safeTransfer(user, unwrappedAmount);
         
-        // 清理请求记录
+        // Clear request record
         delete _unwrapRequests[requestID];
         
         emit Unwrapped(user, FHE.asEuint64(uint64(amount)), unwrappedAmount);
     }
 
     /**
-     * @dev 获取合约持有的底层代币余额
+     * @dev Get underlying token balance held by contract
      */
     function underlyingBalance() public view returns (uint256) {
         return _underlying.balanceOf(address(this));
     }
 
     /**
-     * @dev 紧急提取函数（仅合约所有者可调用）
-     * @param to 接收地址
-     * @param amount 提取数量
+     * @dev Emergency withdraw function (only callable by contract owner)
+     * @param to Receiving address
+     * @param amount Withdrawal amount
      */
     function emergencyWithdraw(address to, uint256 amount) external {
-        // 这里应该添加所有者权限检查
+        // Owner permission check should be added here
         _underlying.safeTransfer(to, amount);
     }
 }
