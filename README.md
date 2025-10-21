@@ -39,8 +39,9 @@ FHESwap aims to create a fully confidential UniswapV2-style AMM where:
 
 **Core Contracts**
 - ✅ **FHEFactory**: Pair creation and management (COMPLETED)
+- ✅ **FHERouter**: Router for swap operations (COMPLETED)
+- ✅ **TokenConverter**: Official FHE token conversion (COMPLETED)
 - 🚧 **FHEPair**: Confidential liquidity pool with encrypted operations (IN DEVELOPMENT)
-- 🚧 **FHERouter**: Router for swap operations (IN DEVELOPMENT)
 
 ### Phase 3: Advanced Features 📋 **FUTURE**
 
@@ -51,7 +52,7 @@ FHESwap aims to create a fully confidential UniswapV2-style AMM where:
 
 ## Current Status: Phase 2 In Progress 🚧
 
-We have successfully implemented the foundational wrapper system and are now developing the core AMM contracts. The factory contract is complete and ready for pair creation and management.
+We have successfully implemented the foundational wrapper system, factory contract, router contract, and token converter. The core AMM infrastructure is nearly complete, with only the FHEPair contract remaining in development.
 
 ### What Works Now
 
@@ -66,6 +67,22 @@ We have successfully implemented the foundational wrapper system and are now dev
 - **Pair Creation**: Deterministic deployment using minimal proxies
 - **Token Type Management**: Support for ERC20, ERC7984, and official FHE tokens
 - **Testing**: Comprehensive test suite for factory operations
+
+#### Router System ✅
+- **FHERouter**: Unified interface for plaintext and encrypted operations
+- **Token Wrapping**: Automatic ERC20 to ERC7984 conversion
+- **Liquidity Management**: Add/remove liquidity with privacy preservation
+- **Token Swapping**: Confidential swap operations
+- **Permission Validation**: User permission checking and validation
+- **Refund System**: Async operation failure handling
+
+#### Token Converter System ✅
+- **TokenConverter**: Official FHE token conversion architecture
+- **Future-Ready**: Reserved architecture for Zama official FHE tokens
+- **Admin Management**: Official FHE token registration and management
+- **Async Processing**: Designed for future async unwrap operations
+- **Batch Operations**: Bulk registration of official FHE tokens
+- **Emergency Functions**: Token withdrawal and emergency controls
 
 #### Example Usage
 
@@ -104,6 +121,59 @@ address pair = fheFactory.createPairWithInfo(
 address existingPair = fheFactory.getPair(tokenA, tokenB);
 ```
 
+**Router System:**
+```solidity
+// Add liquidity (plaintext version)
+router.addLiquidity(
+    tokenA,
+    tokenB,
+    amountA,
+    amountB,
+    to,
+    deadline
+);
+
+// Add liquidity (encrypted version)
+router.addLiquidity(
+    tokenA,
+    tokenB,
+    encryptedAmountA,
+    encryptedAmountB,
+    inputProof,
+    to,
+    deadline
+);
+
+// Swap tokens
+router.swapTokens(
+    tokenIn,
+    tokenOut,
+    amountIn,
+    to,
+    deadline
+);
+```
+
+**Token Converter System:**
+```solidity
+// Register official FHE token (admin only)
+tokenConverter.registerOfficialFHE(
+    officialFHE,
+    underlying,
+    officialWrapper
+);
+
+// Batch register official FHE tokens
+tokenConverter.registerOfficialFHEBatch(
+    officialFHEs,
+    underlyings,
+    officialWrappers
+);
+
+// Check if official FHE is registered
+bool isRegistered = tokenConverter.isOfficialFHERegistered(officialFHE);
+```
+
 ---
 
 ## Architecture
@@ -135,10 +205,10 @@ contracts/
 contracts/
 └── core/                            
     ├── FHEFactory.sol               ✅ Pair factory (COMPLETED)
+    ├── FHERouter.sol                ✅ Swap router (COMPLETED)
+    ├── TokenConverter.sol           ✅ Token converter (COMPLETED)
     ├── FHEPair.sol                  🚧 Liquidity pool (IN DEVELOPMENT)
-    ├── FHEPairLib.sol               🚧 Pair library (IN DEVELOPMENT)
-    ├── FHERouter.sol                🚧 Swap router (IN DEVELOPMENT)
-    └── TokenConverter.sol           🚧 Token converter (IN DEVELOPMENT)
+    └── FHEPairLib.sol               🚧 Pair library (IN DEVELOPMENT)
 
 ---
 
@@ -168,6 +238,22 @@ npx hardhat test
 - **Duplicate pair prevention**: Proper validation and error handling
 - **Factory state management**: Pair tracking and retrieval
 - **Edge cases**: Invalid tokens, unauthorized access, duplicate pairs
+
+**Router System:**
+- **Token wrapping**: ERC20 to ERC7984 conversion testing
+- **Permission validation**: Operator permission checking
+- **Liquidity operations**: Add/remove liquidity with encrypted amounts
+- **Swap operations**: Token swapping with privacy preservation
+- **Error handling**: Comprehensive error scenarios and edge cases
+- **Refund mechanisms**: Async operation failure handling
+
+**Token Converter System:**
+- **Admin functions**: Official FHE token registration and management
+- **Batch operations**: Bulk registration testing
+- **Permission controls**: Owner-only access validation
+- **Future architecture**: Placeholder functions for official FHE integration
+- **Emergency functions**: Token withdrawal and emergency controls
+- **State management**: Registration tracking and validation
 
 All tests passing ✅
 
@@ -212,9 +298,11 @@ npm install
 
 Continuing development of the core AMM contracts:
 - **FHEPair**: Confidential liquidity pool with encrypted operations
-- **FHERouter**: Swap routing and liquidity management
 - **FHEPairLib**: Mathematical operations and FHE computations
-- **TokenConverter**: Official FHE token conversion (future)
+
+**Recently Completed:**
+- **FHERouter**: Swap routing and liquidity management with unified interface
+- **TokenConverter**: Official FHE token conversion architecture (future-ready)
 
 ---
 
