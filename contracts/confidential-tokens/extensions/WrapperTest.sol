@@ -37,7 +37,8 @@ contract WrapperTestSuite {
             address(testToken),
             "Wrapped Test Token",
             "wTEST",
-            1
+            1,
+            WrapperFactory.TokenType.PLAIN_ERC20
         );
         wrapper = ERC20Wrapper(wrapperAddress);
     }

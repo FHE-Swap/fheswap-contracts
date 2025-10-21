@@ -386,63 +386,76 @@ describe("ERC20Wrapper Tests", function () {
 
   describe("Wrapper Factory Integration Tests", function () {
     let wrapperFactory: any;
+    let testMockERC20_18: any;
+    let testMockERC20_6: any;
 
     before(async function () {
       const WrapperFactory = await ethers.getContractFactory("WrapperFactory", signers[0]);
       wrapperFactory = await WrapperFactory.deploy();
       await wrapperFactory.waitForDeployment();
+
+      // Deploy test tokens for this test suite
+      const MockERC20Factory = await ethers.getContractFactory("MockERC20", signers[0]);
+      testMockERC20_18 = await MockERC20Factory.deploy("Test Ethereum", "tETH", 18);
+      await testMockERC20_18.waitForDeployment();
+      
+      testMockERC20_6 = await MockERC20Factory.deploy("Test USD Coin", "tUSDC", 6);
+      await testMockERC20_6.waitForDeployment();
     });
 
     it("should create wrapper through factory", async function () {
       const tx = await wrapperFactory.createWrapper(
-        await mockERC20_18.getAddress(),
+        await testMockERC20_18.getAddress(),
         "Factory Wrapped ETH",
         "fETH",
-        1
+        1,
+        2 // TokenType.PLAIN_ERC20
       );
       await tx.wait();
 
-      const wrappedAddress = await wrapperFactory.getWrapper(await mockERC20_18.getAddress());
+      const wrappedAddress = await wrapperFactory.getWrapper(await testMockERC20_18.getAddress());
       expect(wrappedAddress).to.not.equal(ethers.ZeroAddress);
       expect(await wrapperFactory.isWrapper(wrappedAddress)).to.be.true;
-      expect(await wrapperFactory.getOriginal(wrappedAddress)).to.equal(await mockERC20_18.getAddress());
+      expect(await wrapperFactory.getOriginal(wrappedAddress)).to.equal(await testMockERC20_18.getAddress());
     });
 
     it("should prevent duplicate wrapper creation", async function () {
       await expect(
         wrapperFactory.createWrapper(
-          await mockERC20_18.getAddress(),
+          await testMockERC20_18.getAddress(),
           "Duplicate Wrapper",
           "dETH",
-          1
+          1,
+          2 // TokenType.PLAIN_ERC20
         )
       ).to.be.revertedWithCustomError(wrapperFactory, "TokenAlreadyWrapped");
     });
 
     it("should support default rate creation", async function () {
       const tx = await wrapperFactory.createWrapperWithDefaultRate(
-        await mockERC20_6.getAddress(),
+        await testMockERC20_6.getAddress(),
         "Factory Wrapped USDC",
-        "fUSDC"
+        "fUSDC",
+        2 // TokenType.PLAIN_ERC20
       );
       await tx.wait();
 
-      const wrappedAddress = await wrapperFactory.getWrapper(await mockERC20_6.getAddress());
+      const wrappedAddress = await wrapperFactory.getWrapper(await testMockERC20_6.getAddress());
       expect(wrappedAddress).to.not.equal(ethers.ZeroAddress);
     });
 
     it("should correctly return wrapper information", async function () {
-      const wrappedAddress = await wrapperFactory.getWrapper(await mockERC20_18.getAddress());
+      const wrappedAddress = await wrapperFactory.getWrapper(await testMockERC20_18.getAddress());
       const wrapperInfo = await wrapperFactory.getWrapperInfo(wrappedAddress);
       
-      expect(wrapperInfo.originalToken).to.equal(await mockERC20_18.getAddress());
+      expect(wrapperInfo.originalToken).to.equal(await testMockERC20_18.getAddress());
       expect(wrapperInfo.name).to.equal("Factory Wrapped ETH");
       expect(wrapperInfo.symbol).to.equal("fETH");
       expect(wrapperInfo.rate).to.equal(1);
     });
 
     it("should support batch wrapper queries", async function () {
-      const tokens = [await mockERC20_18.getAddress(), await mockERC20_6.getAddress()];
+      const tokens = [await testMockERC20_18.getAddress(), await testMockERC20_6.getAddress()];
       const wrappers = await wrapperFactory.getWrappers(tokens);
       
       expect(wrappers.length).to.equal(2);
@@ -733,6 +746,7 @@ describe("ERC20Wrapper Tests", function () {
 
   describe("Wrapper Address Mapping Tests", function () {
     let wrapperFactory: any;
+    let testToken: any;
 
     before(async function () {
       console.log("\n🏭 Deploy wrapper factory");
@@ -740,12 +754,17 @@ describe("ERC20Wrapper Tests", function () {
       wrapperFactory = await WrapperFactory.deploy();
       await wrapperFactory.waitForDeployment();
       console.log(`Factory address: ${await wrapperFactory.getAddress()}`);
+
+      // Deploy test token
+      const MockERC20Factory = await ethers.getContractFactory("MockERC20", signers[0]);
+      testToken = await MockERC20Factory.deploy("Test Token", "TEST", 18);
+      await testToken.waitForDeployment();
     });
 
     it("should correctly record wrapper address mapping", async function () {
       console.log("\n📝 Testing wrapper address mapping");
       
-      const originalTokenAddress = await mockERC20_18.getAddress();
+      const originalTokenAddress = await testToken.getAddress();
       console.log(`\n🪙 Original token address: ${originalTokenAddress}`);
       console.log(`Token name: Ethereum (ETH)`);
       
@@ -754,7 +773,8 @@ describe("ERC20Wrapper Tests", function () {
         originalTokenAddress,
         "Record Test Wrapper",
         "rETH",
-        1
+        1,
+        2 // TokenType.PLAIN_ERC20
       );
       const receipt = await tx.wait();
       console.log(`✅ Wrapper created successfully (tx hash: ${receipt.hash})`);

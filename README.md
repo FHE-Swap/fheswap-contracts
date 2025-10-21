@@ -35,12 +35,12 @@ FHESwap aims to create a fully confidential UniswapV2-style AMM where:
 - ✅ Comprehensive test suite with mock decrypt callbacks
 - ✅ Precision testing (1.897867 units test case)
 
-### Phase 2: Core AMM 🚧 **PLANNED**
+### Phase 2: Core AMM 🚧 **IN PROGRESS**
 
 **Core Contracts**
-- **FHEPair**: Confidential liquidity pool with encrypted operations
-- **FHEFactory**: Pair creation and management
-- **FHERouter**: Router for swap operations
+- ✅ **FHEFactory**: Pair creation and management (COMPLETED)
+- 🚧 **FHEPair**: Confidential liquidity pool with encrypted operations (IN DEVELOPMENT)
+- 🚧 **FHERouter**: Router for swap operations (IN DEVELOPMENT)
 
 ### Phase 3: Advanced Features 📋 **FUTURE**
 
@@ -49,20 +49,27 @@ FHESwap aims to create a fully confidential UniswapV2-style AMM where:
 
 ---
 
-## Current Status: Phase 1 Complete ✅
+## Current Status: Phase 2 In Progress 🚧
 
-We have successfully implemented the foundational wrapper system that enables standard ERC20 tokens to be converted into confidential ERC7984 tokens. This is the essential building block for the confidential AMM.
+We have successfully implemented the foundational wrapper system and are now developing the core AMM contracts. The factory contract is complete and ready for pair creation and management.
 
 ### What Works Now
 
-#### Wrapper System
+#### Wrapper System ✅
 - **Wrap**: Convert ERC20 → ERC7984 (confidential)
 - **Unwrap**: Convert ERC7984 → ERC20 (with decrypt callback)
 - **Factory**: Create and manage wrappers for any ERC20 token
 - **Testing**: Full test coverage including edge cases
 
+#### Factory System ✅
+- **FHEFactory**: Create and manage confidential trading pairs
+- **Pair Creation**: Deterministic deployment using minimal proxies
+- **Token Type Management**: Support for ERC20, ERC7984, and official FHE tokens
+- **Testing**: Comprehensive test suite for factory operations
+
 #### Example Usage
 
+**Wrapper System:**
 ```solidity
 // Create a wrapper for any ERC20 token
 address wrapper = factory.createWrapper(
@@ -78,6 +85,23 @@ wrapperContract.wrap(user, amount);
 
 // Unwrap (asynchronous via FHEVM)
 wrapperContract.unwrap(from, to, encryptedAmount);
+```
+
+**Factory System:**
+```solidity
+// Create a trading pair
+address pair = fheFactory.createPairWithInfo(
+    tokenA,
+    tokenB,
+    originalTokenA,
+    originalTokenB,
+    TokenType.PROJECT_WRAPPED,
+    TokenType.PROJECT_WRAPPED,
+    priceScanner
+);
+
+// Get existing pair
+address existingPair = fheFactory.getPair(tokenA, tokenB);
 ```
 
 ---
@@ -105,14 +129,16 @@ contracts/
     └── MockERC20Wrapper.sol         ✅ Mock wrapper with callbacks
 ```
 
-### Planned Contracts
+### Core Contracts
 
 ```
 contracts/
-└── core/                            🚧 Planned
-    ├── FHEFactory.sol               ⏳ Pair factory
-    ├── FHEPair.sol                  ⏳ Liquidity pool
-    └── FHERouter.sol                ⏳ Swap router
+└── core/                            
+    ├── FHEFactory.sol               ✅ Pair factory (COMPLETED)
+    ├── FHEPair.sol                  🚧 Liquidity pool (IN DEVELOPMENT)
+    ├── FHEPairLib.sol               🚧 Pair library (IN DEVELOPMENT)
+    ├── FHERouter.sol                🚧 Swap router (IN DEVELOPMENT)
+    └── TokenConverter.sol           🚧 Token converter (IN DEVELOPMENT)
 
 ---
 
@@ -126,6 +152,7 @@ npx hardhat test
 
 ### Current Test Coverage ✅
 
+**Wrapper System:**
 - **18-decimal tokens** (ETH-like): Wrap/unwrap with precision tests
 - **6-decimal tokens** (USDC-like): Wrap/unwrap with precision tests
 - **Precision test**: 1.897867 units conversion accuracy
@@ -134,6 +161,13 @@ npx hardhat test
 - **Factory integration**: Wrapper creation and management
 - **Edge cases**: Zero amounts, invalid rates, unauthorized access
 - **Event emission**: Wrapped/Unwrapped events
+
+**Factory System:**
+- **Pair creation**: Deterministic deployment testing
+- **Token type validation**: ERC20, ERC7984, and official FHE support
+- **Duplicate pair prevention**: Proper validation and error handling
+- **Factory state management**: Pair tracking and retrieval
+- **Edge cases**: Invalid tokens, unauthorized access, duplicate pairs
 
 All tests passing ✅
 
@@ -176,10 +210,11 @@ npm install
 
 ## Next Steps
 
-Implementing the core AMM contracts:
-- **FHEPair**: Confidential liquidity pool
-- **FHEFactory**: Pair management
-- **FHERouter**: Swap routing
+Continuing development of the core AMM contracts:
+- **FHEPair**: Confidential liquidity pool with encrypted operations
+- **FHERouter**: Swap routing and liquidity management
+- **FHEPairLib**: Mathematical operations and FHE computations
+- **TokenConverter**: Official FHE token conversion (future)
 
 ---
 

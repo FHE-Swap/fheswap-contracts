@@ -2,7 +2,10 @@
 fhevmTemp
 
 # core contracts (not tracked)
-contracts/core/
+contracts/core/FHEPair.sol
+contracts/core/FHEPairLib.sol
+contracts/core/FHERouter.sol
+contracts/core/TokenConverter.sol
 deploy/
 test/FHE.ts
 tasks/FHE.ts
