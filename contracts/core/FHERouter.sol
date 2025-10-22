@@ -11,8 +11,9 @@ import {WrapperFactory} from "../confidential-tokens/extensions/WrapperFactory.s
 import {IERC20Wrapper} from "../confidential-tokens/extensions/IERC20Wrapper.sol";
 import {FHEFactory} from "./FHEFactory.sol";
 import {FHEPair} from "./FHEPair.sol";
+import {FHEPairLib} from "./FHEPairLib.sol";
 import {IERC7984} from "../confidential-tokens/base/IERC7984.sol";
-import {FHE, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
+import {FHE, euint64, euint128, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 
 /**
  * @title FHERouter
@@ -225,24 +226,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
         FHE.allowTransient(amount0, pair);
         FHE.allowTransient(amount1, pair);
 
-        // Step 9: Get LP balance before
-        euint64 lpBalanceBefore = IERC7984(pair).confidentialBalanceOf(address(this));
-
-        // Step 10: Call Pair.addLiquidity
-        // Note: Pair will transfer tokens from Router and mint LP tokens to Router
-        FHEPair(pair).addLiquidity(amount0, amount1, deadline);
-
-        // Step 11: Calculate LP tokens received and transfer to 'to' address
-        if (to != address(this)) {
-            euint64 lpBalanceAfter = IERC7984(pair).confidentialBalanceOf(address(this));
-            euint64 lpReceived = FHE.sub(lpBalanceAfter, lpBalanceBefore);
-
-            // Allow 'to' address to see the LP amount
-            FHE.allowTransient(lpReceived, to);
-
-            // Transfer LP tokens to the user's desired address
-            IERC7984(pair).confidentialTransfer(to, lpReceived);
-        }
+        // Step 9: Call Pair.addLiquidity
+        // Note: Pair will transfer tokens from Router and mint LP tokens directly to 'to'
+        FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
 
         // Emit event
         emit LiquidityAdded(msg.sender, pair, 0);  // requestID is 0 for synchronous operations
@@ -349,20 +335,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
         FHE.allowTransient(amount0, pair);
         FHE.allowTransient(amount1, pair);
 
-        // Get LP balance before
-        euint64 lpBalanceBefore = IERC7984(pair).confidentialBalanceOf(address(this));
-
         // 6.5: Call Pair.addLiquidity
-        FHEPair(pair).addLiquidity(amount0, amount1, deadline);
-
-        // Transfer LP tokens to user's desired address
-        if (to != address(this)) {
-            euint64 lpBalanceAfter = IERC7984(pair).confidentialBalanceOf(address(this));
-            euint64 lpReceived = FHE.sub(lpBalanceAfter, lpBalanceBefore);
-
-            FHE.allowTransient(lpReceived, to);
-            IERC7984(pair).confidentialTransfer(to, lpReceived);
-        }
+        // Pair will mint LP tokens directly to 'to'
+        FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
 
         emit LiquidityAdded(msg.sender, pair, 0);
 
@@ -438,7 +413,8 @@ contract FHERouter is Ownable, ReentrancyGuard {
      * @param tokenIn Input token address
      * @param tokenOut Output token address
      * @param amountIn Input amount (plaintext)
-     * @param to Output token recipient address
+     * @param slippageBps Slippage tolerance in basis points (e.g., 50 = 0.5%)
+     * @param to Recipient address: receives output tokens on success, or refund on slippage failure
      * @param deadline Deadline timestamp
      * @return requestID Request ID
      *
@@ -449,6 +425,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address tokenIn,
         address tokenOut,
         uint256 amountIn,
+        uint16 slippageBps,
         address to,
         uint256 deadline
     ) external nonReentrant notPaused validDeadline(deadline) returns (uint256 requestID) {
@@ -491,11 +468,14 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Step 8: Convert plaintext to encrypted
         euint64 encryptedAmountIn = FHE.asEuint64(uint64(amountIn));
 
+        // Determine swap direction
+        bool isToken0In = (wrappedTokenIn == token0);
+
         // Determine amount0In and amount1In based on which token is being swapped
         euint64 amount0In;
         euint64 amount1In;
 
-        if (wrappedTokenIn == token0) {
+        if (isToken0In) {
             // Swapping token0 → token1
             amount0In = encryptedAmountIn;
             amount1In = FHE.asEuint64(0);
@@ -505,12 +485,31 @@ contract FHERouter is Ownable, ReentrancyGuard {
             amount1In = encryptedAmountIn;
         }
 
-        // Step 9: Allow Pair to access encrypted data
+        // Step 9: Calculate expected output parts for slippage protection
+        // Get current reserves from pair
+        (euint64 reserve0, euint64 reserve1) = FHEPair(pair).getReserves();
+
+        // Calculate expected output using FHEPairLib
+        (euint128 expectedDivUpperPart, euint128 expectedDivLowerPart) =
+            FHEPairLib.calculateExpectedOutParts(encryptedAmountIn, isToken0In, reserve0, reserve1);
+
+        // Step 10: Allow Pair to access encrypted data
         FHE.allowTransient(amount0In, pair);
         FHE.allowTransient(amount1In, pair);
+        FHE.allowTransient(expectedDivUpperPart, pair);
+        FHE.allowTransient(expectedDivLowerPart, pair);
 
-        // Step 10: Call Pair.swapTokens
-        FHEPair(pair).swapTokens(amount0In, amount1In, to, deadline);
+        // Step 11: Call Pair.swapTokens with slippage protection
+        FHEPair(pair).swapTokens(
+            amount0In,
+            amount1In,
+            expectedDivUpperPart,
+            expectedDivLowerPart,
+            slippageBps,
+            isToken0In,
+            to,
+            deadline
+        );
 
         // Emit event
         emit TokensSwapped(msg.sender, pair, 0);
@@ -524,7 +523,8 @@ contract FHERouter is Ownable, ReentrancyGuard {
      * @param tokenOut Output token address
      * @param encryptedAmountIn Encrypted input amount
      * @param inputProof Input proof
-     * @param to Output token recipient address
+     * @param slippageBps Slippage tolerance in basis points (e.g., 50 = 0.5%)
+     * @param to Recipient address: receives output tokens on success, or refund on slippage failure
      * @param deadline Deadline timestamp
      * @return requestID Request ID
      *
@@ -536,6 +536,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address tokenOut,
         externalEuint64 encryptedAmountIn,
         bytes calldata inputProof,
+        uint16 slippageBps,
         address to,
         uint256 deadline
     ) external nonReentrant notPaused validDeadline(deadline) returns (uint256 requestID) {
@@ -593,11 +594,14 @@ contract FHERouter is Ownable, ReentrancyGuard {
             revert InvalidToken();
         }
 
-        // 5.5: Construct amount0In and amount1In based on swap direction
+        // 5.5: Determine swap direction
+        bool isToken0In = (processedTokenIn == token0);
+
+        // 5.6: Construct amount0In and amount1In based on swap direction
         euint64 amount0In;
         euint64 amount1In;
 
-        if (processedTokenIn == token0) {
+        if (isToken0In) {
             // Swapping token0 → token1
             amount0In = processedAmountIn;
             amount1In = FHE.asEuint64(0);
@@ -607,12 +611,31 @@ contract FHERouter is Ownable, ReentrancyGuard {
             amount1In = processedAmountIn;
         }
 
-        // 5.6: Allow Pair to access encrypted data
+        // 5.7: Calculate expected output parts for slippage protection
+        // Get current reserves from pair
+        (euint64 reserve0, euint64 reserve1) = FHEPair(pair).getReserves();
+
+        // Calculate expected output using FHEPairLib
+        (euint128 expectedDivUpperPart, euint128 expectedDivLowerPart) =
+            FHEPairLib.calculateExpectedOutParts(processedAmountIn, isToken0In, reserve0, reserve1);
+
+        // 5.8: Allow Pair to access encrypted data
         FHE.allowTransient(amount0In, pair);
         FHE.allowTransient(amount1In, pair);
+        FHE.allowTransient(expectedDivUpperPart, pair);
+        FHE.allowTransient(expectedDivLowerPart, pair);
 
-        // 5.7: Call Pair.swapTokens
-        FHEPair(pair).swapTokens(amount0In, amount1In, to, deadline);
+        // 5.9: Call Pair.swapTokens with slippage protection
+        FHEPair(pair).swapTokens(
+            amount0In,
+            amount1In,
+            expectedDivUpperPart,
+            expectedDivLowerPart,
+            slippageBps,
+            isToken0In,
+            to,
+            deadline
+        );
 
         emit TokensSwapped(msg.sender, pair, 0);
 

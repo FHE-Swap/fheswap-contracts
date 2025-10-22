@@ -15,9 +15,14 @@ import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 contract FHEFactory {
     // ============ State Variables ============
-    
+
     // Pair implementation address for minimal proxy
     address public immutable PAIR_IMPLEMENTATION;
+
+    // Platform fee configuration
+    address public feeTo;             // Platform fee recipient address
+    uint16 public platformFeeBps;     // Platform fee in basis points (e.g., 5 = 0.05%)
+    address public feeToSetter;       // Address authorized to change fee configuration
     
     // ============ Enums ============
     
@@ -45,9 +50,11 @@ contract FHEFactory {
     }
     
     // ============ Constructor ============
-    
+
     constructor(address _pairImplementation) {
         PAIR_IMPLEMENTATION = _pairImplementation;
+        feeToSetter = msg.sender;   // Deployer has initial control
+        platformFeeBps = 5;         // Default 0.05% platform fee
     }
     
     // ============ State Variables ============
@@ -97,7 +104,20 @@ contract FHEFactory {
         address originalToken1,
         TokenType type1
     );
-    
+
+    /**
+     * @dev Emitted when platform fee configuration is updated
+     * @param feeTo New platform fee recipient address
+     * @param platformFeeBps New platform fee in basis points
+     */
+    event PlatformFeeConfigUpdated(address indexed feeTo, uint16 platformFeeBps);
+
+    /**
+     * @dev Emitted when feeToSetter is changed
+     * @param newFeeToSetter New address authorized to change fee configuration
+     */
+    event FeeToSetterChanged(address indexed newFeeToSetter);
+
     // ============ Errors ============
     
     error FactoryError(uint8 code);
@@ -107,6 +127,10 @@ contract FHEFactory {
     uint8 public constant ERROR_ZERO_ADDRESS = 2;
     uint8 public constant ERROR_PAIR_EXISTS = 3;
     uint8 public constant ERROR_PAIR_CREATION_FAILED = 4;
+
+    // Platform fee constants
+    uint16 public constant TOTAL_FEE_BPS = 30;      // Total swap fee 0.3% (fixed)
+    uint16 public constant MAX_PLATFORM_FEE = 15;   // Max platform fee 0.15% (prevent excessive fees)
 
     // ============ Core Functions ============
     
@@ -292,5 +316,49 @@ contract FHEFactory {
     function hasTokenInfo(address pair) external view returns (bool) {
         return pairToken0Info[pair].tokenAddress != address(0);
     }
-    
+
+    // ============ Platform Fee Configuration ============
+
+    /**
+     * @dev Set the platform fee recipient address
+     * @param _feeTo New platform fee recipient address (set to address(0) to disable platform fees)
+     */
+    function setFeeTo(address _feeTo) external {
+        require(msg.sender == feeToSetter, 'FHEFactory: FORBIDDEN');
+        feeTo = _feeTo;
+        emit PlatformFeeConfigUpdated(_feeTo, platformFeeBps);
+    }
+
+    /**
+     * @dev Set the platform fee rate (configurable)
+     * @param _platformFeeBps New platform fee in basis points (e.g., 5 = 0.05%, 10 = 0.1%)
+     */
+    function setPlatformFeeBps(uint16 _platformFeeBps) external {
+        require(msg.sender == feeToSetter, 'FHEFactory: FORBIDDEN');
+        require(_platformFeeBps <= MAX_PLATFORM_FEE, 'FEE_TOO_HIGH');
+        require(_platformFeeBps <= TOTAL_FEE_BPS, 'EXCEEDS_TOTAL_FEE');
+
+        platformFeeBps = _platformFeeBps;
+        emit PlatformFeeConfigUpdated(feeTo, _platformFeeBps);
+    }
+
+    /**
+     * @dev Change the address authorized to modify fee configuration
+     * @param _feeToSetter New feeToSetter address
+     */
+    function setFeeToSetter(address _feeToSetter) external {
+        require(msg.sender == feeToSetter, 'FHEFactory: FORBIDDEN');
+        feeToSetter = _feeToSetter;
+        emit FeeToSetterChanged(_feeToSetter);
+    }
+
+    /**
+     * @dev Get current platform fee configuration
+     * @return _feeTo Platform fee recipient address
+     * @return _platformFeeBps Platform fee in basis points
+     */
+    function getFeeConfig() external view returns (address _feeTo, uint16 _platformFeeBps) {
+        return (feeTo, platformFeeBps);
+    }
+
 }
