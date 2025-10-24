@@ -3,7 +3,6 @@
 pragma solidity ^0.8.27;
 
 import {FHEPair} from "./FHEPair.sol";
-import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 /**
  * @title FHEFactory
@@ -15,9 +14,6 @@ import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 contract FHEFactory {
     // ============ State Variables ============
-
-    // Pair implementation address for minimal proxy
-    address public immutable PAIR_IMPLEMENTATION;
 
     // Platform fee configuration
     address public feeTo;             // Platform fee recipient address
@@ -51,8 +47,7 @@ contract FHEFactory {
     
     // ============ Constructor ============
 
-    constructor(address _pairImplementation) {
-        PAIR_IMPLEMENTATION = _pairImplementation;
+    constructor() {
         feeToSetter = msg.sender;   // Deployer has initial control
         platformFeeBps = 5;         // Default 0.05% platform fee
     }
@@ -146,34 +141,33 @@ contract FHEFactory {
      * @dev Internal function to create pair and record basic mappings
      * @param token0 Token0 address
      * @param token1 Token1 address
-     * @param priceScanner Price scanner address
      * @return pair Created pair address
      */
     function _createPairInternal(
         address token0,
-        address token1,
-        address priceScanner
+        address token1
     ) internal returns (address pair) {
         // Create unique salt for deterministic deployment
         bytes32 salt = keccak256(abi.encodePacked(token0, token1));
-        
-        // Deploy new FHEPair contract using minimal proxy
-        pair = Clones.cloneDeterministic(PAIR_IMPLEMENTATION, salt);
+
+        // Deploy new FHEPair contract directly (using CREATE2 for deterministic address)
+        FHEPair newPair = new FHEPair{salt: salt}();
+        pair = address(newPair);
         if (pair == address(0)) revert FactoryError(ERROR_PAIR_CREATION_FAILED);
-        
+
         // Initialize pair contract with token addresses
         FHEPair(pair).initialize(token0, token1, address(this));
-        
+
         // Store pair address in getPair mapping (bidirectional)
         getPair[token0][token1] = pair;
         getPair[token1][token0] = pair;
-        
+
         // Add pair address to all pairs list
         allPairs.push(pair);
-        
+
         // Emit PairCreated event
         emit PairCreated(token0, token1, pair, allPairs.length);
-        
+
         return pair;
     }
 
@@ -182,10 +176,9 @@ contract FHEFactory {
      * Both tokenA and tokenB should be confidential token contracts
      * @param tokenA Address of the first token in the pair
      * @param tokenB Address of the second token in the pair
-     * @param priceScanner Price scanner address for decrypting obfuscated reserves
      * @return pair Address of the newly created pair
      */
-    function createPair(address tokenA, address tokenB, address priceScanner) external returns (address pair) {
+    function createPair(address tokenA, address tokenB) external returns (address pair) {
         // Ensure tokens are not identical
         if (tokenA == tokenB) revert FactoryError(ERROR_IDENTICAL_TOKENS);
 
@@ -199,7 +192,7 @@ contract FHEFactory {
         if (getPair[token0][token1] != address(0)) revert FactoryError(ERROR_PAIR_EXISTS);
 
         // Create pair using internal function
-        pair = _createPairInternal(token0, token1, priceScanner);
+        pair = _createPairInternal(token0, token1);
     }
     
     /**
@@ -210,7 +203,7 @@ contract FHEFactory {
      * @param originalTokenB Original tokenB address (user input)
      * @param typeA TokenA type
      * @param typeB TokenB type
-     * @param priceScanner Price scanner address
+
      * @return pair Address of the created pair
      */
     function createPairWithInfo(
@@ -219,8 +212,7 @@ contract FHEFactory {
         address originalTokenA,
         address originalTokenB,
         TokenType typeA,
-        TokenType typeB,
-        address priceScanner
+        TokenType typeB
     ) external returns (address pair) {
         // Validation
         if (tokenA == tokenB) revert FactoryError(ERROR_IDENTICAL_TOKENS);
@@ -235,7 +227,7 @@ contract FHEFactory {
         if (getPair[token0][token1] != address(0)) revert FactoryError(ERROR_PAIR_EXISTS);
         
         // Create pair using internal function
-        pair = _createPairInternal(token0, token1, priceScanner);
+        pair = _createPairInternal(token0, token1);
         
         // Record original token mappings
         getPairByOriginal[originalToken0][originalToken1] = pair;

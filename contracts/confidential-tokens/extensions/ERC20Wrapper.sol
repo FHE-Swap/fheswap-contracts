@@ -3,7 +3,6 @@
 pragma solidity ^0.8.27;
 
 import {FHE, externalEuint64, ebool, euint64} from "@fhevm/solidity/lib/FHE.sol";
-import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -13,8 +12,9 @@ import {IERC20Wrapper} from "./IERC20Wrapper.sol";
 /**
  * @title ERC20Wrapper
  * @dev Contract for wrapping ERC20 tokens into ERC7984 confidential tokens
+ * @notice SepoliaConfig is inherited through ERC7984
  */
-contract ERC20Wrapper is ERC7984, SepoliaConfig {
+contract ERC20Wrapper is ERC7984 {
     using SafeERC20 for IERC20;
 
     IERC20 private immutable _underlying;

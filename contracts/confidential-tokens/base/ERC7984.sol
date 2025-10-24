@@ -5,6 +5,7 @@
 pragma solidity ^0.8.27;
 
 import {FHE, externalEuint64, ebool, euint64} from "@fhevm/solidity/lib/FHE.sol";
+import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {IERC7984} from "./IERC7984.sol";
 import {FHESafeMath} from "./FHESafeMath.sol";
 import {ERC7984Utils} from "./ERC7984Utils.sol";
@@ -24,7 +25,7 @@ import {ERC7984Utils} from "./ERC7984Utils.sol";
  * - Transfer and call pattern
  * - Safe overflow/underflow handling for FHE operations
  */
-abstract contract ERC7984 is IERC7984 {
+abstract contract ERC7984 is SepoliaConfig, IERC7984 {
     mapping(address holder => euint64) private _balances;
     mapping(address holder => mapping(address spender => uint48)) private _operators;
     euint64 private _totalSupply;

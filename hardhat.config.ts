@@ -46,6 +46,7 @@ const config: HardhatUserConfig = {
         mnemonic: MNEMONIC,
       },
       chainId: 31337,
+      allowUnlimitedContractSize: true,  // Allow large contracts in test environment
     },
     anvil: {
       accounts: {

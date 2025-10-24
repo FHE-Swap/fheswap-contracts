@@ -2,6 +2,7 @@
 
 pragma solidity ^0.8.27;
 
+import "hardhat/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -53,42 +54,30 @@ contract FHERouter is Ownable, ReentrancyGuard {
     // ============ Enums ============
 
     enum TokenType {
-        PROJECT_WRAPPED,  // 0: Project wrapped ERC7984
-        OFFICIAL_FHE,     // 1: Zama official FHE (reserved)
-        PLAIN_ERC20      // 2: Plain ERC20
+        PROJECT_WRAPPED, // 0: Project wrapped ERC7984
+        OFFICIAL_FHE, // 1: Zama official FHE (reserved)
+        PLAIN_ERC20 // 2: Plain ERC20
     }
 
     enum RefundType {
-        LIQUIDITY_ADD,    // 0: Add liquidity refund
+        LIQUIDITY_ADD, // 0: Add liquidity refund
         LIQUIDITY_REMOVE, // 1: Remove liquidity refund
-        SWAP             // 2: Swap refund
+        SWAP // 2: Swap refund
     }
 
     enum OperationType {
-        ADD_LIQUIDITY,    // 0: Add liquidity
+        ADD_LIQUIDITY, // 0: Add liquidity
         REMOVE_LIQUIDITY, // 1: Remove liquidity
-        SWAP             // 2: Swap
+        SWAP // 2: Swap
     }
 
     // ============ Events ============
 
-    event LiquidityAdded(
-        address indexed user,
-        address indexed pair,
-        uint256 requestID
-    );
+    event LiquidityAdded(address indexed user, address indexed pair, uint256 requestID);
 
-    event LiquidityRemoved(
-        address indexed user,
-        address indexed pair,
-        uint256 requestID
-    );
+    event LiquidityRemoved(address indexed user, address indexed pair, uint256 requestID);
 
-    event TokensSwapped(
-        address indexed user,
-        address indexed pair,
-        uint256 requestID
-    );
+    event TokensSwapped(address indexed user, address indexed pair, uint256 requestID);
 
     event TokenWrapped(
         address indexed user,
@@ -97,17 +86,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         uint256 amount
     );
 
-    event TokenUnwrapped(
-        address indexed user,
-        address indexed wrappedToken,
-        address indexed to,
-        uint256 requestID
-    );
-
-    event OfficialFHETokenUpdated(
-        address indexed token,
-        bool isOfficial
-    );
+    event OfficialFHETokenUpdated(address indexed token, bool isOfficial);
 
     // ============ Errors ============
 
@@ -117,22 +96,17 @@ contract FHERouter is Ownable, ReentrancyGuard {
     error PairNotFound();
     error RouterPaused();
     error PairCreationFailed();
-    error UnsupportedToken(address token);              // Unsupported external ERC7984
-    error MustUseEncryptedVersion();                    // Must use encrypted version
-    error OnlyProjectWrappedToken();                    // Only project wrapped tokens supported
-    error OfficialFHENotSupported();                    // Official FHE not supported yet
+    error UnsupportedToken(address token); // Unsupported external ERC7984
+    error MustUseEncryptedVersion(); // Must use encrypted version
+    error OnlyProjectWrappedToken(); // Only project wrapped tokens supported
+    error OfficialFHENotSupported(); // Official FHE not supported yet
     error OperatorNotSet(address token, address user, address operator);
-    error InvalidRefundType();                          // Invalid refund type
-    error WrapperNotFound();                            // Original token has no wrapper
-    error InvalidOutputToken();                         // Invalid output token
+    error InvalidRefundType(); // Invalid refund type
+    error InvalidOutputToken(); // Invalid output token
 
     // ============ Constructor ============
 
-    constructor(
-        address _wrapperFactory,
-        address _fheFactory,
-        address _tokenConverter
-    ) Ownable(msg.sender) {
+    constructor(address _wrapperFactory, address _fheFactory, address _tokenConverter) Ownable(msg.sender) {
         if (_wrapperFactory == address(0)) revert InvalidToken();
         if (_fheFactory == address(0)) revert InvalidToken();
         if (_tokenConverter == address(0)) revert InvalidToken();
@@ -180,42 +154,65 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address to,
         uint256 deadline
     ) external nonReentrant notPaused validDeadline(deadline) returns (uint256 requestID) {
+        console.log("Router.addLiquidity start", tokenA, tokenB, msg.sender);
+        console.log(" Amounts:", amountA, amountB);
+        console.log(" To:", to);
+
         // Step 1: Validate inputs
+        console.log("Step 1: Validating inputs...");
         if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
         if (tokenA == tokenB) revert InvalidToken();
         if (amountA == 0 || amountB == 0) revert InvalidAmount();
         if (to == address(0)) revert InvalidToken();
+        console.log(" Step 1: Input validation passed");
 
         // Step 2: Strictly verify token types (must both be PLAIN_ERC20)
+        console.log(" Step 2: Determining token types...");
         TokenType typeA = determineTokenType(tokenA);
         TokenType typeB = determineTokenType(tokenB);
+        console.log(" Token types:", uint256(typeA), uint256(typeB));
 
         if (typeA != TokenType.PLAIN_ERC20 || typeB != TokenType.PLAIN_ERC20) {
             revert MustUseEncryptedVersion();
         }
+        console.log(" Step 2: Token type validation passed");
 
         // Step 3: Process tokenA (ERC20 → wrap)
+        console.log(" Step 3: Wrapping tokenA...");
         address wrappedTokenA = wrapToken(tokenA, amountA);
+        console.log(" Wrapped tokenA:", wrappedTokenA);
 
         // Step 4: Process tokenB (ERC20 → wrap)
+        console.log(" Step 4: Wrapping tokenB...");
         address wrappedTokenB = wrapToken(tokenB, amountB);
+        console.log(" Wrapped tokenB:", wrappedTokenB);
 
         // Step 5: Ensure Pair exists
-        address pair = _ensurePairExists(
-            wrappedTokenA,
-            wrappedTokenB,
-            tokenA,
-            tokenB
-        );
+        console.log(" Step 5: Ensuring pair exists...");
+        address pair = _ensurePairExists(wrappedTokenA, wrappedTokenB, tokenA, tokenB);
+        console.log(" Pair address:", pair);
 
         // Step 6: Router sets Pair as operator for both wrapped tokens
         // This allows Pair to call confidentialTransferFrom(Router, Pair, amount)
         IERC7984(wrappedTokenA).setOperator(pair, uint48(deadline));
+        console.log(" Set operator for tokenA");
         IERC7984(wrappedTokenB).setOperator(pair, uint48(deadline));
+        console.log(" Set operator for tokenB");
 
         // Step 7: Convert plaintext to encrypted
+        console.log(" Step 7: Converting to encrypted amounts...");
+        console.log("  amountA raw:", amountA);
+        console.log("  amountB raw:", amountB);
+        console.log("  amountA uint64:", uint64(amountA));
+        console.log("  amountB uint64:", uint64(amountB));
+
+        console.log("  Attempting FHE.asEuint64 approach...");
+        // In Mock environment, FHE.asEuint64() generates deterministic pseudo-handles
+        // This internally does: bytes32 handle = keccak256(abi.encodePacked("asEuint64", amountA));
         euint64 encryptedAmountA = FHE.asEuint64(uint64(amountA));
+        console.log("  encryptedAmountA created");
         euint64 encryptedAmountB = FHE.asEuint64(uint64(amountB));
+        console.log("  encryptedAmountB created");
 
         // Determine token order in pair (token0 < token1)
         (euint64 amount0, euint64 amount1) = uint160(wrappedTokenA) < uint160(wrappedTokenB)
@@ -223,17 +220,22 @@ contract FHERouter is Ownable, ReentrancyGuard {
             : (encryptedAmountB, encryptedAmountA);
 
         // Step 8: Allow Pair to access encrypted amounts
+        console.log(" Step 8: Allowing transient access...");
         FHE.allowTransient(amount0, pair);
         FHE.allowTransient(amount1, pair);
+        console.log(" Transient access granted");
 
         // Step 9: Call Pair.addLiquidity
+        console.log(" Step 9: Calling Pair.addLiquidity...");
         // Note: Pair will transfer tokens from Router and mint LP tokens directly to 'to'
         FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
+        console.log(" Pair.addLiquidity completed");
 
         // Emit event
-        emit LiquidityAdded(msg.sender, pair, 0);  // requestID is 0 for synchronous operations
+        emit LiquidityAdded(msg.sender, pair, 0); // requestID is 0 for synchronous operations
+        console.log(" Router.addLiquidity completed successfully");
 
-        return 0;  // Synchronous operation, no requestID needed
+        return 0; // Synchronous operation, no requestID needed
     }
 
     /**
@@ -310,12 +312,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Step 6: Synchronous flow (both tokens are PROJECT_WRAPPED)
 
         // 6.1: Ensure Pair exists
-        address pair = _ensurePairExists(
-            processedTokenA,
-            processedTokenB,
-            tokenA,
-            tokenB
-        );
+        address pair = _ensurePairExists(processedTokenA, processedTokenB, tokenA, tokenB);
 
         // 6.2: Transfer tokens from user to Router first
         // (Pair will later pull from Router)
@@ -341,7 +338,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
         emit LiquidityAdded(msg.sender, pair, 0);
 
-        return 0;  // Synchronous operation, no requestID needed
+        return 0; // Synchronous operation, no requestID needed
 
         // Step 7: Asynchronous flow for official FHE conversion
         // TODO: Implement when official FHE tokens are available
@@ -405,7 +402,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
         emit LiquidityRemoved(msg.sender, pair, 0);
 
-        return 0;  // Synchronous operation, no requestID needed
+        return 0; // Synchronous operation, no requestID needed
     }
 
     /**
@@ -460,8 +457,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address token1 = FHEPair(pair).token1Address();
 
         // Verify tokens are in the pair
-        if (!((wrappedTokenIn == token0 && processedTokenOut == token1) ||
-              (wrappedTokenIn == token1 && processedTokenOut == token0))) {
+        if (
+            !((wrappedTokenIn == token0 && processedTokenOut == token1) ||
+                (wrappedTokenIn == token1 && processedTokenOut == token0))
+        ) {
             revert InvalidToken();
         }
 
@@ -490,8 +489,12 @@ contract FHERouter is Ownable, ReentrancyGuard {
         (euint64 reserve0, euint64 reserve1) = FHEPair(pair).getReserves();
 
         // Calculate expected output using FHEPairLib
-        (euint128 expectedDivUpperPart, euint128 expectedDivLowerPart) =
-            FHEPairLib.calculateExpectedOutParts(encryptedAmountIn, isToken0In, reserve0, reserve1);
+        (euint128 expectedDivUpperPart, euint128 expectedDivLowerPart) = FHEPairLib.calculateExpectedOutParts(
+            encryptedAmountIn,
+            isToken0In,
+            reserve0,
+            reserve1
+        );
 
         // Step 10: Allow Pair to access encrypted data
         FHE.allowTransient(amount0In, pair);
@@ -514,7 +517,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Emit event
         emit TokensSwapped(msg.sender, pair, 0);
 
-        return 0;  // Synchronous operation, no requestID needed
+        return 0; // Synchronous operation, no requestID needed
     }
 
     /**
@@ -550,7 +553,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
         // Step 3: Determine token types
         TokenType typeIn = determineTokenType(tokenIn);
-        TokenType typeOut = determineTokenType(tokenOut);
+        // Note: typeOut is determined later when processing tokenOut
 
         // Step 4: Process tokenIn based on type
         address processedTokenIn;
@@ -589,8 +592,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address token0 = FHEPair(pair).token0Address();
         address token1 = FHEPair(pair).token1Address();
 
-        if (!((processedTokenIn == token0 && processedTokenOut == token1) ||
-              (processedTokenIn == token1 && processedTokenOut == token0))) {
+        if (
+            !((processedTokenIn == token0 && processedTokenOut == token1) ||
+                (processedTokenIn == token1 && processedTokenOut == token0))
+        ) {
             revert InvalidToken();
         }
 
@@ -616,8 +621,12 @@ contract FHERouter is Ownable, ReentrancyGuard {
         (euint64 reserve0, euint64 reserve1) = FHEPair(pair).getReserves();
 
         // Calculate expected output using FHEPairLib
-        (euint128 expectedDivUpperPart, euint128 expectedDivLowerPart) =
-            FHEPairLib.calculateExpectedOutParts(processedAmountIn, isToken0In, reserve0, reserve1);
+        (euint128 expectedDivUpperPart, euint128 expectedDivLowerPart) = FHEPairLib.calculateExpectedOutParts(
+            processedAmountIn,
+            isToken0In,
+            reserve0,
+            reserve1
+        );
 
         // 5.8: Allow Pair to access encrypted data
         FHE.allowTransient(amount0In, pair);
@@ -639,7 +648,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
         emit TokensSwapped(msg.sender, pair, 0);
 
-        return 0;  // Synchronous operation, no requestID needed
+        return 0; // Synchronous operation, no requestID needed
 
         // Step 6: Asynchronous flow for official FHE conversion
         // TODO: Implement when official FHE tokens are available
@@ -647,69 +656,79 @@ contract FHERouter is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Unwrap project tokens to ERC20 (new feature)
+     * @dev Wrap ERC20 tokens to project ERC7984 (direct wrapper call)
      * @param originalToken Original ERC20 token address (e.g., USDC address)
-     * @param encryptedAmount Encrypted amount
-     * @param inputProof Input proof
-     * @param to ERC20 recipient address
-     * @return requestID Unwrap request ID
+     * @param amount Amount to wrap
+     * @param to ERC7984 recipient address
+     * @return wrappedToken Address of the wrapped token
      *
      * User prerequisites:
-     * 1. Get wrapper address: wrapper = WrapperFactory.getWrapper(originalToken)
-     * 2. Set Router as operator: IERC7984(wrapper).setOperator(router, deadline)
-     * 3. Call this function
+     * - originalToken.approve(router, amount)
      *
      * Process:
-     * - Router queries wrapper address
-     * - Router calls wrapper's unwrap function
-     * - Wrapper asynchronously decrypts and sends ERC20 to 'to' address
-     *
-     * Note: Only supports unwrapping project wrapped tokens, not official FHE
+     * - Router gets wrapper address
+     * - Router approves wrapper to spend ERC20
+     * - Router calls wrapper.wrap() directly
+     * - Wrapper handles the wrapping and sends tokens to 'to'
      */
-    function unwrapToken(
+    function wrapToken(
         address originalToken,
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof,
-        address to,
-        uint256 deadline
-    ) external nonReentrant notPaused validDeadline(deadline) returns (uint256 requestID) {
+        uint256 amount,
+        address to
+    ) external nonReentrant notPaused returns (address wrappedToken) {
         // Step 1: Validate inputs
         if (originalToken == address(0) || to == address(0)) revert InvalidToken();
+        if (amount == 0) revert InvalidAmount();
 
-        // Step 2: Query wrapper address
-        address wrapper = WrapperFactory(WRAPPER_FACTORY).getWrapper(originalToken);
-        if (wrapper == address(0)) revert WrapperNotFound();
+        // Step 2: Get or create wrapper
+        string memory name;
+        string memory symbol;
 
-        // Step 3: Import encrypted amount
-        euint64 amount = FHE.fromExternal(encryptedAmount, inputProof);
+        try IERC20Metadata(originalToken).name() returns (string memory n) {
+            name = n;
+        } catch {
+            name = "Unknown";
+        }
 
-        // Step 4: Check user has set Router as operator for the wrapper
-        _checkOperatorPermission(msg.sender, wrapper);
+        try IERC20Metadata(originalToken).symbol() returns (string memory s) {
+            symbol = s;
+        } catch {
+            symbol = "UNK";
+        }
 
-        // Step 5: Transfer wrapped tokens from user to Router
-        IERC7984(wrapper).confidentialTransferFrom(msg.sender, address(this), amount);
+        wrappedToken = WrapperFactory(WRAPPER_FACTORY).getOrCreateWrapper(
+            originalToken,
+            string(abi.encodePacked("Confidential ", name)),
+            string(abi.encodePacked("c", symbol)),
+            WrapperFactory.TokenType.PLAIN_ERC20
+        );
 
-        // Step 6: Router sets wrapper as operator
-        // This allows the wrapper to burn tokens from Router
-        IERC7984(wrapper).setOperator(wrapper, uint48(deadline));
+        // Step 3: Transfer ERC20 from user to Router first
+        IERC20(originalToken).safeTransferFrom(msg.sender, address(this), amount);
 
-        // Step 7: Allow wrapper to access encrypted amount
-        FHE.allowTransient(amount, wrapper);
+        // Step 4: Approve wrapper to spend ERC20 from Router
+        IERC20(originalToken).approve(wrappedToken, amount);
 
-        // Step 8: Call Wrapper.unwrap
-        // Note: Unwrap is asynchronous
-        // - Wrapper burns the wrapped tokens from Router
-        // - Wrapper requests FHE decryption
-        // - After decryption, wrapper sends ERC20 to 'to' address
-        IERC20Wrapper(wrapper).unwrap(address(this), to, amount);
+        // Step 5: Call wrapper.wrap() directly - wrapper will transfer from Router
+        IERC20Wrapper(wrappedToken).wrap(to, amount);
 
-        emit TokenUnwrapped(msg.sender, wrapper, to, 0);
+        emit TokenWrapped(msg.sender, originalToken, wrappedToken, amount);
 
-        return 0;  // Unwrap is asynchronous, actual requestID is generated by wrapper
-
-        // Note: The underlying ERC20 will be sent directly to 'to' address
-        // in the wrapper's finalizeUnwrap callback, no need for Router to hold it
+        return wrappedToken;
     }
+
+    // ============================================
+    // Note: For unwrapping tokens, users should directly call the wrapper contract
+    //
+    // Steps:
+    // 1. Get wrapper address: wrapper = WrapperFactory(WRAPPER_FACTORY).getWrapper(originalToken)
+    // 2. Call wrapper.unwrap(from, to, encryptedAmount, inputProof)
+    //    - No setOperator needed when msg.sender == from
+    //    - Wrapper will decrypt and send ERC20 to 'to' address
+    //
+    // Rationale: Direct unwrapping is simpler, cheaper (no intermediate transfer),
+    // and doesn't require additional operator permissions.
+    // ============================================
 
     /**
      * @dev Request refund (for failed or timed out async operations)
@@ -848,7 +867,6 @@ contract FHERouter is Ownable, ReentrancyGuard {
      * @dev Determine token type (with external ERC7984 protection)
      */
     function determineTokenType(address token) internal view returns (TokenType) {
-
         if (WrapperFactory(WRAPPER_FACTORY).isWrapper(token)) {
             return TokenType.PROJECT_WRAPPED;
         }
@@ -856,7 +874,6 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (officialFHETokens[token]) {
             return TokenType.OFFICIAL_FHE;
         }
-
 
         if (_isERC7984(token)) {
             revert UnsupportedToken(token);
@@ -972,15 +989,13 @@ contract FHERouter is Ownable, ReentrancyGuard {
         FHEFactory.TokenType factoryTypeB = FHEFactory.TokenType(uint8(typeB));
 
         // Create pair with type information
-        // Note: Using address(0) as priceScanner placeholder for now
         pairAddress = FHEFactory(FHE_FACTORY).createPairWithInfo(
             processedTokenA,
             processedTokenB,
             originalTokenA,
             originalTokenB,
             factoryTypeA,
-            factoryTypeB,
-            address(0)  // priceScanner placeholder
+            factoryTypeB
         );
 
         if (pairAddress == address(0)) {

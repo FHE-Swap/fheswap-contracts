@@ -14,8 +14,9 @@ import {IERC20Wrapper} from "../confidential-tokens/extensions/IERC20Wrapper.sol
  * @title MockERC20Wrapper
  * @dev ERC20 wrapper for testing, supports mock decryption callbacks
  *      Inherits all functionality of ERC20Wrapper, but adds test-specific mock features
+ * @notice SepoliaConfig is inherited through ERC7984
  */
-contract MockERC20Wrapper is ERC7984, SepoliaConfig {
+contract MockERC20Wrapper is ERC7984 {
     using SafeERC20 for IERC20;
 
     // Underlying ERC20 token contract

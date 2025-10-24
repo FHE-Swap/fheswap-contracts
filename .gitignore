@@ -3,7 +3,13 @@ fhevmTemp
 
 # core contracts (not tracked)
 contracts/core/FHEPair.sol
-contracts/core/FHEPairLib.sol
+scripts/deploy-camm.ts
+scripts/checkSelectors.js
+test/core/factory/FHEFactory.comprehensive.test.ts
+test/core/factory/FHEFactory.simple.test.ts
+test/helpers
+test/integration
+test/unit
 
 deploy/
 test/FHE.ts

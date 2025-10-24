@@ -223,8 +223,7 @@ describe("FHEFactory", function () {
                 mockToken1Address,
                 mockToken2Address,
                 TokenType.PROJECT_WRAPPED,
-                TokenType.PROJECT_WRAPPED,
-                priceScanner.address
+                TokenType.PROJECT_WRAPPED
             );
             const receipt = await createPairTx.wait();
 

@@ -29,7 +29,7 @@ describe("FHEFactory Basic Tests", function () {
                 FHEPairLib: libAddr,
             },
         });
-        const pairImpl = await FHEPairFactory.deploy(priceScanner.address);
+        const pairImpl = await FHEPairFactory.deploy();
         await pairImpl.waitForDeployment();
         const pairImplAddr = await pairImpl.getAddress();
 
@@ -98,7 +98,7 @@ describe("FHEFactory Basic Tests", function () {
             const sameAddress = ethers.Wallet.createRandom().address;
 
             await expect(
-                factory.createPair(sameAddress, sameAddress, priceScanner.address)
+                factory.createPair(sameAddress, sameAddress)
             ).to.be.revertedWithCustomError(factory, "FactoryError")
             .withArgs(1); // ERROR_IDENTICAL_TOKENS
         });
@@ -107,7 +107,7 @@ describe("FHEFactory Basic Tests", function () {
             const randomAddress = ethers.Wallet.createRandom().address;
 
             await expect(
-                factory.createPair(ethers.ZeroAddress, randomAddress, priceScanner.address)
+                factory.createPair(ethers.ZeroAddress, randomAddress)
             ).to.be.revertedWithCustomError(factory, "FactoryError")
             .withArgs(2); // ERROR_ZERO_ADDRESS
         });
@@ -123,8 +123,7 @@ describe("FHEFactory Basic Tests", function () {
                     originalAddress,
                     originalAddress,
                     TokenType.PROJECT_WRAPPED,
-                    TokenType.PROJECT_WRAPPED,
-                    priceScanner.address
+                    TokenType.PROJECT_WRAPPED
                 )
             ).to.be.revertedWithCustomError(factory, "FactoryError")
             .withArgs(1); // ERROR_IDENTICAL_TOKENS
@@ -141,8 +140,7 @@ describe("FHEFactory Basic Tests", function () {
                     originalAddress,
                     originalAddress,
                     TokenType.PROJECT_WRAPPED,
-                    TokenType.PROJECT_WRAPPED,
-                    priceScanner.address
+                    TokenType.PROJECT_WRAPPED
                 )
             ).to.be.revertedWithCustomError(factory, "FactoryError")
             .withArgs(2); // ERROR_ZERO_ADDRESS

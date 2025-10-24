@@ -3,10 +3,12 @@
 pragma solidity ^0.8.27;
 
 import "@fhevm/solidity/lib/FHE.sol";
-import {SepoliaConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {ERC7984} from "./confidential-tokens/base/ERC7984.sol";
 
-contract ConfidentialToken is SepoliaConfig, ERC7984 {
+/**
+ * @notice SepoliaConfig is inherited through ERC7984
+ */
+contract ConfidentialToken is ERC7984 {
     euint64 private airDropAmount;
 
     constructor(string memory name_, string memory symbol_) ERC7984(name_, symbol_, "") {
