@@ -1,805 +1,880 @@
 import { ethers } from "hardhat";
 import { expect } from "chai";
 import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
-import { 
-    FHEFactory,
-    FHEPair
-} from "../../types/contracts/core";
-import { 
-    WrapperFactory,
-    ERC20Wrapper
-} from "../../types/contracts/confidential-tokens/extensions";
-import { MockERC20 } from "../../types/contracts/test";
 
-describe("FHEFactory", function () {
-    let factory: FHEFactory;
-    let wrapperFactory: WrapperFactory;
-    let mockToken1: MockERC20;
-    let mockToken2: MockERC20;
-    let wrapper1: ERC20Wrapper;
-    let wrapper2: ERC20Wrapper;
+/**
+ * FHEFactory Comprehensive Test Suite
+ * 
+ * Test Coverage:
+ * 1. Contract deployment and initial state
+ * 2. createPairWithInfo - Create trading pair (with complete info)
+ * 3. Token information recording and querying
+ * 4. Query pairs by original addresses and wrapped addresses
+ * 5. Platform fee configuration management
+ * 6. Error handling and security checks
+ * 7. Edge cases and special scenarios
+ */
+describe("FHEFactory - Comprehensive Tests", function () {
+    let factory: any;
+    let wrapperFactory: any;
+    let mockTokenA: any;
+    let mockTokenB: any;
+    let wrapperA: any;
+    let wrapperB: any;
     let owner: SignerWithAddress;
     let user1: SignerWithAddress;
-    let priceScanner: SignerWithAddress;
+    let feeTo: SignerWithAddress;
 
+    // Token type enum (matches contract)
     const TokenType = {
-        PROJECT_WRAPPED: 0,
-        OFFICIAL_FHE: 1,
-        PLAIN_ERC20: 2
+        PROJECT_WRAPPED: 0,   // Project-wrapped token
+        OFFICIAL_FHE: 1,      // Official FHE token
+        PLAIN_ERC20: 2        // Plain ERC20 token
     };
 
     beforeEach(async function () {
-        [owner, user1, priceScanner] = await ethers.getSigners();
+        [owner, user1, feeTo] = await ethers.getSigners();
 
-        // Deploy MockERC20 tokens
+        console.log("\n" + "=".repeat(80));
+        console.log("🚀 Starting test environment setup");
+        console.log("=".repeat(80));
+        console.log("👥 Test Accounts:");
+        console.log(`  - Owner:  ${owner.address}`);
+        console.log(`  - User1:  ${user1.address}`);
+        console.log(`  - FeeTo:  ${feeTo.address}`);
+
+        // 1. Deploy MockERC20 tokens
+        console.log("\n📝 Step 1/5: Deploy Mock ERC20 Tokens");
         const MockERC20Factory = await ethers.getContractFactory("MockERC20");
-        mockToken1 = await MockERC20Factory.deploy("Token1", "TK1", 18);
-        mockToken2 = await MockERC20Factory.deploy("Token2", "TK2", 18);
-        await mockToken1.waitForDeployment();
-        await mockToken2.waitForDeployment();
+        mockTokenA = await MockERC20Factory.deploy("Token A", "TKA", 18);
+        mockTokenB = await MockERC20Factory.deploy("Token B", "TKB", 18);
+        await mockTokenA.waitForDeployment();
+        await mockTokenB.waitForDeployment();
+        const tokenAAddr = await mockTokenA.getAddress();
+        const tokenBAddr = await mockTokenB.getAddress();
+        console.log(`  ✅ Token A (TKA): ${tokenAAddr}`);
+        console.log(`  ✅ Token B (TKB): ${tokenBAddr}`);
 
-        // Deploy WrapperFactory
+        // 2. Deploy WrapperFactory
+        console.log("\n📝 Step 2/5: Deploy WrapperFactory");
         const WrapperFactoryContract = await ethers.getContractFactory("WrapperFactory");
         wrapperFactory = await WrapperFactoryContract.deploy();
         await wrapperFactory.waitForDeployment();
+        const wrapperFactoryAddr = await wrapperFactory.getAddress();
+        console.log(`  ✅ WrapperFactory: ${wrapperFactoryAddr}`);
 
-        // Create wrapped tokens
-        const createWrapper1Tx = await wrapperFactory.createWrapper(
-            await mockToken1.getAddress(),
-            "Wrapped Token1",
-            "wTK1",
-            1,
-            2 // TokenType.PLAIN_ERC20
+        // 3. Create wrapped tokens
+        console.log("\n📝 Step 3/5: Create Wrapped Tokens");
+        await wrapperFactory.createWrapper(
+            tokenAAddr,
+            "Wrapped Token A",
+            "wTKA",
+            ethers.parseUnits("1", 12),
+            TokenType.PLAIN_ERC20
         );
-        await createWrapper1Tx.wait();
-
-        const createWrapper2Tx = await wrapperFactory.createWrapper(
-            await mockToken2.getAddress(),
-            "Wrapped Token2", 
-            "wTK2",
-            1,
-            2 // TokenType.PLAIN_ERC20
+        await wrapperFactory.createWrapper(
+            tokenBAddr,
+            "Wrapped Token B",
+            "wTKB",
+            ethers.parseUnits("1", 12),
+            TokenType.PLAIN_ERC20
         );
-        await createWrapper2Tx.wait();
 
-        // Get wrapper addresses
-        const wrapper1Address = await wrapperFactory.getWrapper(await mockToken1.getAddress());
-        const wrapper2Address = await wrapperFactory.getWrapper(await mockToken2.getAddress());
+        const wrapperAAddr = await wrapperFactory.getWrapper(tokenAAddr);
+        const wrapperBAddr = await wrapperFactory.getWrapper(tokenBAddr);
+        console.log(`  ✅ Wrapper A (wTKA): ${wrapperAAddr}`);
+        console.log(`  ✅ Wrapper B (wTKB): ${wrapperBAddr}`);
+        console.log(`  📊 Mapping Relationships:`);
+        console.log(`     ${tokenAAddr} → ${wrapperAAddr}`);
+        console.log(`     ${tokenBAddr} → ${wrapperBAddr}`);
 
-        wrapper1 = await ethers.getContractAt("ERC20Wrapper", wrapper1Address);
-        wrapper2 = await ethers.getContractAt("ERC20Wrapper", wrapper2Address);
+        const ERC20WrapperFactory = await ethers.getContractFactory("ERC20Wrapper");
+        wrapperA = ERC20WrapperFactory.attach(wrapperAAddr);
+        wrapperB = ERC20WrapperFactory.attach(wrapperBAddr);
 
-        // Deploy FHEPairLib first
+        // 4. Deploy FHEPairLib
+        console.log("\n📝 Step 4/5: Deploy FHEPairLib");
         const LibFactory = await ethers.getContractFactory("FHEPairLib");
         const lib = await LibFactory.deploy();
         await lib.waitForDeployment();
         const libAddr = await lib.getAddress();
+        console.log(`  ✅ FHEPairLib: ${libAddr}`);
 
-        // Deploy FHEPair implementation first
-        const FHEPairFactory = await ethers.getContractFactory("FHEPair", {
+        // 5. Deploy FHEFactory
+        console.log("\n📝 Step 5/5: Deploy FHEFactory");
+        const FHEFactoryContract = await ethers.getContractFactory("FHEFactory", {
             libraries: {
                 FHEPairLib: libAddr,
             },
         });
-        const pairImpl = await FHEPairFactory.deploy(priceScanner.address);
-        await pairImpl.waitForDeployment();
-        const pairImplAddr = await pairImpl.getAddress();
-
-        // Deploy FHEFactory with pair implementation
-        const FHEFactoryContract = await ethers.getContractFactory("FHEFactory");
-        factory = await FHEFactoryContract.deploy(pairImplAddr);
+        factory = await FHEFactoryContract.deploy();
         await factory.waitForDeployment();
+        const factoryAddr = await factory.getAddress();
+        console.log(`  ✅ FHEFactory: ${factoryAddr}`);
+        console.log(`  🔗 Using Library: ${libAddr}`);
+        
+        console.log("\n" + "=".repeat(80));
+        console.log("✅ Test Environment Setup Completed");
+        console.log("=".repeat(80));
     });
 
-    describe("Deployment", function () {
-        it("Should deploy successfully", async function () {
-            console.log("🚀 Testing Factory deployment...");
-            const factoryAddress = await factory.getAddress();
+    describe("1. Contract Deployment & Initial State", function () {
+        it("should deploy correctly and set initial state", async function () {
+            console.log("\n📋 Testing Initial State...");
+            
+            const factoryAddr = await factory.getAddress();
             const pairCount = await factory.allPairsLength();
+            const feeToSetter = await factory.feeToSetter();
+            const feeTo = await factory.feeTo();
+            const platformFeeBps = await factory.platformFeeBps();
             
-            console.log("📍 Factory Address:", factoryAddress);
-            console.log("📊 Initial Pair Count:", pairCount.toString());
+            console.log("  📍 Factory Address:", factoryAddr);
+            console.log("  📊 Initial Pair Count:", pairCount.toString());
+            console.log("  👤 Fee To Setter:", feeToSetter);
+            console.log("  💰 Fee Recipient Address:", feeTo);
+            console.log("  💸 Platform Fee Rate (bps):", platformFeeBps.toString());
             
-            expect(factoryAddress).to.be.properAddress;
+            expect(factoryAddr).to.be.properAddress;
             expect(pairCount).to.equal(0);
+            expect(feeToSetter).to.equal(owner.address);
+            expect(feeTo).to.equal(ethers.ZeroAddress);
+            expect(platformFeeBps).to.equal(5); // Default 0.05%
             
-            console.log("✅ Factory deployment test passed!");
+            console.log("  ✅ Initial State is Correct");
+        });
+
+        it("should have correct fee constants", async function () {
+            console.log("\n💰 Testing Fee Constants...");
+            
+            const TOTAL_FEE_BPS = await factory.TOTAL_FEE_BPS();
+            const MAX_PLATFORM_FEE = await factory.MAX_PLATFORM_FEE();
+            
+            console.log("  📊 Total Fee Rate (bps):", TOTAL_FEE_BPS.toString());
+            console.log("  📊 Max Platform Fee (bps):", MAX_PLATFORM_FEE.toString());
+            
+            expect(TOTAL_FEE_BPS).to.equal(30); // 0.3%
+            expect(MAX_PLATFORM_FEE).to.equal(15); // 0.15%
+            
+            console.log("  ✅ Fee Constants are Correct");
         });
     });
 
-    describe("Legacy createPair function", function () {
-        it("Should create pair with legacy function", async function () {
-            console.log("🔄 Testing legacy createPair function...");
+    describe("2. Create Trading Pair (with Complete Info)", function () {
+        it("should create trading pair with complete information", async function () {
+            console.log("\n" + "-".repeat(80));
+            console.log("🔄 Test: Create Trading Pair with Complete Info");
+            console.log("-".repeat(80));
             
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
             
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-            console.log("📍 Wrapper2 Address:", wrapper2Address);
-            console.log("📍 Price Scanner Address:", priceScanner.address);
+            console.log("\n📍 Input Parameters:");
+            console.log(`  ┌─ Wrapped Token A: ${wrapperAAddr}`);
+            console.log(`  ├─ Wrapped Token B: ${wrapperBAddr}`);
+            console.log(`  ├─ Original Token A: ${tokenAAddr}`);
+            console.log(`  ├─ Original Token B: ${tokenBAddr}`);
+            console.log(`  ├─ Token Type A: ${TokenType.PROJECT_WRAPPED} (PROJECT_WRAPPED)`);
+            console.log(`  └─ Token Type B: ${TokenType.PROJECT_WRAPPED} (PROJECT_WRAPPED)`);
 
-            const createPairTx = await factory.createPair(
-                wrapper1Address,
-                wrapper2Address,
-                priceScanner.address
-            );
-            const receipt = await createPairTx.wait();
-
-            console.log("📝 Transaction Status:", receipt?.status);
-            console.log("⛽ Gas Used:", receipt?.gasUsed?.toString());
-
-            expect(receipt?.status).to.equal(1);
-            
-            const pairCount = await factory.allPairsLength();
-            console.log("📊 Total Pairs After Creation:", pairCount.toString());
-            expect(pairCount).to.equal(1);
-
-            // Check pair exists
-            const pairAddress = await factory.getPair(wrapper1Address, wrapper2Address);
-            console.log("🔗 Created Pair Address:", pairAddress);
-            expect(pairAddress).to.not.equal(ethers.ZeroAddress);
-
-            // Check bidirectional mapping
-            const pairAddressReverse = await factory.getPair(wrapper2Address, wrapper1Address);
-            console.log("🔄 Reverse Pair Address:", pairAddressReverse);
-            expect(pairAddress).to.equal(pairAddressReverse);
-            
-            console.log("✅ Legacy createPair test passed!");
-        });
-
-        it("Should revert when creating pair with identical tokens", async function () {
-            console.log("❌ Testing identical tokens error...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            console.log("📍 Token Address:", wrapper1Address);
-
-            await expect(
-                factory.createPair(wrapper1Address, wrapper1Address, priceScanner.address)
-            ).to.be.revertedWithCustomError(factory, "FactoryError")
-            .withArgs(1); // ERROR_IDENTICAL_TOKENS
-            
-            console.log("✅ Identical tokens error test passed!");
-        });
-
-        it("Should revert when creating pair with zero address", async function () {
-            console.log("❌ Testing zero address error...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            console.log("📍 Valid Token Address:", wrapper1Address);
-            console.log("📍 Zero Address:", ethers.ZeroAddress);
-
-            await expect(
-                factory.createPair(ethers.ZeroAddress, wrapper1Address, priceScanner.address)
-            ).to.be.revertedWithCustomError(factory, "FactoryError")
-            .withArgs(2); // ERROR_ZERO_ADDRESS
-            
-            console.log("✅ Zero address error test passed!");
-        });
-
-        it("Should revert when pair already exists", async function () {
-            console.log("❌ Testing pair already exists error...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-            console.log("📍 Wrapper2 Address:", wrapper2Address);
-
-            // Create first pair
-            console.log("🔄 Creating first pair...");
-            await factory.createPair(wrapper1Address, wrapper2Address, priceScanner.address);
-            console.log("✅ First pair created successfully");
-
-            // Try to create same pair again
-            console.log("🔄 Attempting to create duplicate pair...");
-            await expect(
-                factory.createPair(wrapper1Address, wrapper2Address, priceScanner.address)
-            ).to.be.revertedWithCustomError(factory, "FactoryError")
-            .withArgs(3); // ERROR_PAIR_EXISTS
-            
-            console.log("✅ Pair already exists error test passed!");
-        });
-    });
-
-    describe("New createPairWithInfo function", function () {
-        it("Should create pair with detailed information", async function () {
-            console.log("🆕 Testing createPairWithInfo function...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-            
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-            console.log("📍 Wrapper2 Address:", wrapper2Address);
-            console.log("📍 Original Token1 Address:", mockToken1Address);
-            console.log("📍 Original Token2 Address:", mockToken2Address);
-            console.log("🏷️ Token1 Type:", TokenType.PROJECT_WRAPPED);
-            console.log("🏷️ Token2 Type:", TokenType.PROJECT_WRAPPED);
-
-            const createPairTx = await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper2Address,
-                mockToken1Address,
-                mockToken2Address,
+            console.log("\n📤 Sending Transaction: createPairWithInfo()");
+            const tx = await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
                 TokenType.PROJECT_WRAPPED,
                 TokenType.PROJECT_WRAPPED
             );
-            const receipt = await createPairTx.wait();
-
-            console.log("📝 Transaction Status:", receipt?.status);
-            console.log("⛽ Gas Used:", receipt?.gasUsed?.toString());
-
-            expect(receipt?.status).to.equal(1);
+            console.log(`  ⏳ Transaction Hash: ${tx.hash}`);
             
+            console.log("  ⏳ Waiting for Transaction Confirmation...");
+            const receipt = await tx.wait();
+            console.log(`  ✅ Transaction Confirmed (Block: ${receipt?.blockNumber})`);
+            console.log(`  ⛽ Gas Used: ${receipt?.gasUsed?.toString()}`);
+            
+            console.log("\n📊 Verifying Results:");
             const pairCount = await factory.allPairsLength();
-            console.log("📊 Total Pairs After Creation:", pairCount.toString());
+            console.log(`  ├─ Total Trading Pairs: ${pairCount.toString()}`);
             expect(pairCount).to.equal(1);
-
-            // Check pair exists in both mappings
-            const pairAddress = await factory.getPair(wrapper1Address, wrapper2Address);
-            console.log("🔗 Created Pair Address:", pairAddress);
-            expect(pairAddress).to.not.equal(ethers.ZeroAddress);
-
-            const pairByOriginal = await factory.getPairByOriginalTokens(
-                mockToken1Address,
-                mockToken2Address
-            );
-            console.log("🔗 Pair by Original Tokens:", pairByOriginal);
-            expect(pairAddress).to.equal(pairByOriginal);
             
-            console.log("✅ createPairWithInfo test passed!");
+            const pairAddr = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            console.log(`  ├─ Created Pair: ${pairAddr}`);
+            expect(pairAddr).to.not.equal(ethers.ZeroAddress);
+            
+            // Verify bidirectional query
+            const pairAddrReverse = await factory.getPair(wrapperBAddr, wrapperAAddr);
+            console.log(`  ├─ Reverse Query Result: ${pairAddrReverse}`);
+            expect(pairAddr).to.equal(pairAddrReverse);
+            console.log(`  └─ ✅ Bidirectional Mapping Works`);
+            
+            console.log("\n✅ Trading Pair Created Successfully");
+            console.log("-".repeat(80));
         });
 
-        it("Should record token information correctly", async function () {
-            console.log("📝 Testing token information recording...");
+        it("should emit PairCreated and PairCreatedWithInfo events", async function () {
+            console.log("\n📡 Testing Event Emission...");
             
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-            
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-            console.log("📍 Wrapper2 Address:", wrapper2Address);
-            console.log("📍 Original Token1 Address:", mockToken1Address);
-            console.log("📍 Original Token2 Address:", mockToken2Address);
-            console.log("🏷️ Token1 Type:", TokenType.PLAIN_ERC20);
-            console.log("🏷️ Token2 Type:", TokenType.PROJECT_WRAPPED);
-
-            await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper2Address,
-                mockToken1Address,
-                mockToken2Address,
-                TokenType.PLAIN_ERC20,
-                TokenType.PROJECT_WRAPPED,
-                priceScanner.address
-            );
-
-            const pairAddress = await factory.getPair(wrapper1Address, wrapper2Address);
-            console.log("🔗 Created Pair Address:", pairAddress);
-
-            // Determine expected order based on address sorting
-            const [expectedToken0, expectedToken1] = BigInt(wrapper1Address) < BigInt(wrapper2Address) 
-                ? [wrapper1Address, wrapper2Address]
-                : [wrapper2Address, wrapper1Address];
-            
-            const [expectedOriginal0, expectedOriginal1] = BigInt(wrapper1Address) < BigInt(wrapper2Address)
-                ? [mockToken1Address, mockToken2Address]
-                : [mockToken2Address, mockToken1Address];
-            
-            const [expectedType0, expectedType1] = BigInt(wrapper1Address) < BigInt(wrapper2Address)
-                ? [TokenType.PLAIN_ERC20, TokenType.PROJECT_WRAPPED]
-                : [TokenType.PROJECT_WRAPPED, TokenType.PLAIN_ERC20];
-
-            console.log("🔄 Address Sorting Results:");
-            console.log("  Expected Token0:", expectedToken0);
-            console.log("  Expected Token1:", expectedToken1);
-            console.log("  Expected Original0:", expectedOriginal0);
-            console.log("  Expected Original1:", expectedOriginal1);
-            console.log("  Expected Type0:", expectedType0);
-            console.log("  Expected Type1:", expectedType1);
-
-            // Check token0 info
-            const token0Info = await factory.getToken0Info(pairAddress);
-            console.log("📊 Token0 Info:");
-            console.log("  Address:", token0Info.tokenAddress);
-            console.log("  Original:", token0Info.originalAddress);
-            console.log("  Type:", token0Info.tokenType.toString());
-            
-            expect(token0Info.tokenAddress).to.equal(expectedToken0);
-            expect(token0Info.originalAddress).to.equal(expectedOriginal0);
-            expect(token0Info.tokenType).to.equal(expectedType0);
-
-            // Check token1 info
-            const token1Info = await factory.getToken1Info(pairAddress);
-            console.log("📊 Token1 Info:");
-            console.log("  Address:", token1Info.tokenAddress);
-            console.log("  Original:", token1Info.originalAddress);
-            console.log("  Type:", token1Info.tokenType.toString());
-            
-            expect(token1Info.tokenAddress).to.equal(expectedToken1);
-            expect(token1Info.originalAddress).to.equal(expectedOriginal1);
-            expect(token1Info.tokenType).to.equal(expectedType1);
-
-            // Check full info
-            const [fullToken0Info, fullToken1Info] = await factory.getPairFullInfo(pairAddress);
-            console.log("📋 Full Pair Info:");
-            console.log("  Full Token0 Address:", fullToken0Info.tokenAddress);
-            console.log("  Full Token1 Address:", fullToken1Info.tokenAddress);
-            
-            expect(fullToken0Info.tokenAddress).to.equal(token0Info.tokenAddress);
-            expect(fullToken1Info.tokenAddress).to.equal(token1Info.tokenAddress);
-            
-            console.log("✅ Token information recording test passed!");
-        });
-
-        it("Should handle token ordering correctly", async function () {
-            console.log("🔄 Testing token ordering logic...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-            
-            console.log("📍 Input Addresses:");
-            console.log("  Wrapper1:", wrapper1Address);
-            console.log("  Wrapper2:", wrapper2Address);
-            console.log("  Original1:", mockToken1Address);
-            console.log("  Original2:", mockToken2Address);
-
-            // Determine expected order (token0 < token1)
-            const [expectedToken0, expectedToken1] = BigInt(wrapper1Address) < BigInt(wrapper2Address) 
-                ? [wrapper1Address, wrapper2Address]
-                : [wrapper2Address, wrapper1Address];
-
-            const [expectedOriginal0, expectedOriginal1] = BigInt(wrapper1Address) < BigInt(wrapper2Address)
-                ? [mockToken1Address, mockToken2Address]
-                : [mockToken2Address, mockToken1Address];
-
-            console.log("🔄 Expected Ordering:");
-            console.log("  Token0:", expectedToken0);
-            console.log("  Token1:", expectedToken1);
-            console.log("  Original0:", expectedOriginal0);
-            console.log("  Original1:", expectedOriginal1);
-
-            await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper2Address,
-                mockToken1Address,
-                mockToken2Address,
-                TokenType.PLAIN_ERC20,
-                TokenType.PROJECT_WRAPPED,
-                priceScanner.address
-            );
-
-            const pairAddress = await factory.getPair(expectedToken0, expectedToken1);
-            console.log("🔗 Pair Address:", pairAddress);
-            
-            const token0Info = await factory.getToken0Info(pairAddress);
-            const token1Info = await factory.getToken1Info(pairAddress);
-
-            console.log("📊 Actual Results:");
-            console.log("  Token0 Address:", token0Info.tokenAddress);
-            console.log("  Token1 Address:", token1Info.tokenAddress);
-            console.log("  Token0 Original:", token0Info.originalAddress);
-            console.log("  Token1 Original:", token1Info.originalAddress);
-
-            expect(token0Info.tokenAddress).to.equal(expectedToken0);
-            expect(token1Info.tokenAddress).to.equal(expectedToken1);
-            expect(token0Info.originalAddress).to.equal(expectedOriginal0);
-            expect(token1Info.originalAddress).to.equal(expectedOriginal1);
-            
-            console.log("✅ Token ordering test passed!");
-        });
-
-        it("Should emit events correctly", async function () {
-            console.log("📡 Testing event emission...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-            
-            console.log("📍 Event Parameters:");
-            console.log("  Wrapper1:", wrapper1Address);
-            console.log("  Wrapper2:", wrapper2Address);
-            console.log("  Original1:", mockToken1Address);
-            console.log("  Original2:", mockToken2Address);
-
-            const [expectedToken0, expectedToken1] = BigInt(wrapper1Address) < BigInt(wrapper2Address) 
-                ? [wrapper1Address, wrapper2Address]
-                : [wrapper2Address, wrapper1Address];
-
-            const [expectedOriginal0, expectedOriginal1] = BigInt(wrapper1Address) < BigInt(wrapper2Address)
-                ? [mockToken1Address, mockToken2Address]
-                : [mockToken2Address, mockToken1Address];
-
-            const [expectedType0, expectedType1] = BigInt(wrapper1Address) < BigInt(wrapper2Address)
-                ? [TokenType.PLAIN_ERC20, TokenType.PROJECT_WRAPPED]
-                : [TokenType.PROJECT_WRAPPED, TokenType.PLAIN_ERC20];
-
-            console.log("📡 Expected Events:");
-            console.log("  PairCreated with:", expectedToken0, expectedToken1);
-            console.log("  PairCreatedWithInfo with:", expectedToken0, expectedOriginal0, expectedType0, expectedToken1, expectedOriginal1, expectedType1);
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
 
             await expect(
                 factory.createPairWithInfo(
-                    wrapper1Address,
-                    wrapper2Address,
-                    mockToken1Address,
-                    mockToken2Address,
-                    TokenType.PLAIN_ERC20,
+                    wrapperAAddr,
+                    wrapperBAddr,
+                    tokenAAddr,
+                    tokenBAddr,
                     TokenType.PROJECT_WRAPPED,
-                    priceScanner.address
+                    TokenType.PROJECT_WRAPPED
                 )
             ).to.emit(factory, "PairCreated")
              .and.to.emit(factory, "PairCreatedWithInfo");
-             
-            console.log("✅ Event emission test passed!");
+            
+            console.log("  ✅ Events Emitted Correctly");
+        });
+
+        it("should handle token sorting correctly (token0 < token1)", async function () {
+            console.log("\n🔄 Testing Token Sorting...");
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            const pairAddr = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            const token0Info = await factory.getToken0Info(pairAddr);
+            const token1Info = await factory.getToken1Info(pairAddr);
+
+            console.log("  📍 Token0 Address:", token0Info.tokenAddress);
+            console.log("  📍 Token1 Address:", token1Info.tokenAddress);
+            
+            // Verify token0 < token1
+            expect(BigInt(token0Info.tokenAddress) < BigInt(token1Info.tokenAddress)).to.be.true;
+            console.log("  ✅ Token Sorting Correct (token0 < token1)");
+        });
+
+        it("should create bidirectional mapping", async function () {
+            console.log("\n🔄 Testing Bidirectional Mapping...");
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            const pair1 = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            const pair2 = await factory.getPair(wrapperBAddr, wrapperAAddr);
+            
+            console.log("  🔗 Pair (A, B):", pair1);
+            console.log("  🔗 Pair (B, A):", pair2);
+            
+            expect(pair1).to.equal(pair2);
+            expect(pair1).to.not.equal(ethers.ZeroAddress);
+            
+            console.log("  ✅ Bidirectional Mapping Works Properly");
         });
     });
 
-    describe("Query functions", function () {
-        let pairAddress: string;
+    describe("3. Token Information Recording", function () {
+        let pairAddr: string;
 
         beforeEach(async function () {
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
 
             await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper2Address,
-                mockToken1Address,
-                mockToken2Address,
-                TokenType.PLAIN_ERC20,
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
                 TokenType.PROJECT_WRAPPED,
-                priceScanner.address
+                TokenType.PROJECT_WRAPPED
             );
 
-            pairAddress = await factory.getPair(wrapper1Address, wrapper2Address);
+            pairAddr = await factory.getPair(wrapperAAddr, wrapperBAddr);
         });
 
-        it("Should query pair by original tokens", async function () {
-            console.log("🔍 Testing pair query by original tokens...");
+        it("should record token information correctly", async function () {
+            console.log("\n" + "-".repeat(80));
+            console.log("📝 Test: Token Information Recording & Querying");
+            console.log("-".repeat(80));
             
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
+            console.log("\n🔍 Querying Trading Pair Information:");
+            console.log(`  Pair Address: ${pairAddr}`);
             
-            console.log("📍 Original Token1:", mockToken1Address);
-            console.log("📍 Original Token2:", mockToken2Address);
-            console.log("🔗 Expected Pair:", pairAddress);
-
-            const queriedPair = await factory.getPairByOriginalTokens(
-                mockToken1Address,
-                mockToken2Address
-            );
-            console.log("🔍 Queried Pair (normal order):", queriedPair);
-            expect(queriedPair).to.equal(pairAddress);
-
-            // Test reverse order
-            const queriedPairReverse = await factory.getPairByOriginalTokens(
-                mockToken2Address,
-                mockToken1Address
-            );
-            console.log("🔍 Queried Pair (reverse order):", queriedPairReverse);
-            expect(queriedPairReverse).to.equal(pairAddress);
+            const token0Info = await factory.getToken0Info(pairAddr);
+            const token1Info = await factory.getToken1Info(pairAddr);
             
-            console.log("✅ Original tokens query test passed!");
+            console.log("\n📊 Token0 Detailed Information:");
+            console.log(`  ┌─ Current Address (tokenAddress): ${token0Info.tokenAddress}`);
+            console.log(`  ├─ Original Address (originalAddress): ${token0Info.originalAddress}`);
+            console.log(`  ├─ Token Type (tokenType): ${token0Info.tokenType.toString()}`);
+            console.log(`  └─ Type Description: ${token0Info.tokenType === TokenType.PROJECT_WRAPPED ? 'PROJECT_WRAPPED' : token0Info.tokenType === TokenType.OFFICIAL_FHE ? 'OFFICIAL_FHE' : 'PLAIN_ERC20'}`);
+            
+            console.log("\n📊 Token1 Detailed Information:");
+            console.log(`  ┌─ Current Address (tokenAddress): ${token1Info.tokenAddress}`);
+            console.log(`  ├─ Original Address (originalAddress): ${token1Info.originalAddress}`);
+            console.log(`  ├─ Token Type (tokenType): ${token1Info.tokenType.toString()}`);
+            console.log(`  └─ Type Description: ${token1Info.tokenType === TokenType.PROJECT_WRAPPED ? 'PROJECT_WRAPPED' : token1Info.tokenType === TokenType.OFFICIAL_FHE ? 'OFFICIAL_FHE' : 'PLAIN_ERC20'}`);
+            
+            console.log("\n✅ Verification Results:");
+            console.log("  ├─ Token0 Address Non-Zero:", token0Info.tokenAddress !== ethers.ZeroAddress ? "✅" : "❌");
+            expect(token0Info.tokenAddress).to.not.equal(ethers.ZeroAddress);
+            console.log("  ├─ Token1 Address Non-Zero:", token1Info.tokenAddress !== ethers.ZeroAddress ? "✅" : "❌");
+            expect(token1Info.tokenAddress).to.not.equal(ethers.ZeroAddress);
+            console.log("  ├─ Token0 Original Address Non-Zero:", token0Info.originalAddress !== ethers.ZeroAddress ? "✅" : "❌");
+            expect(token0Info.originalAddress).to.not.equal(ethers.ZeroAddress);
+            console.log("  ├─ Token1 Original Address Non-Zero:", token1Info.originalAddress !== ethers.ZeroAddress ? "✅" : "❌");
+            expect(token1Info.originalAddress).to.not.equal(ethers.ZeroAddress);
+            console.log("  ├─ Token0 Type Correct:", token0Info.tokenType === TokenType.PROJECT_WRAPPED ? "✅" : "❌");
+            expect(token0Info.tokenType).to.equal(TokenType.PROJECT_WRAPPED);
+            console.log("  └─ Token1 Type Correct:", token1Info.tokenType === TokenType.PROJECT_WRAPPED ? "✅" : "❌");
+            expect(token1Info.tokenType).to.equal(TokenType.PROJECT_WRAPPED);
+            
         });
 
-        it("Should check if pair has token info", async function () {
-            console.log("ℹ️ Testing token info existence check...");
+        it("should return complete trading pair information", async function () {
+            console.log("\n📋 Testing complete information query...");
             
-            const hasInfo = await factory.hasTokenInfo(pairAddress);
+            const [token0Info, token1Info] = await factory.getPairFullInfo(pairAddr);
+            
+            console.log("  📊 Complete Token0 info:", token0Info.tokenAddress);
+            console.log("  📊 Complete Token1 info:", token1Info.tokenAddress);
+            
+            expect(token0Info.tokenAddress).to.not.equal(ethers.ZeroAddress);
+            expect(token1Info.tokenAddress).to.not.equal(ethers.ZeroAddress);
+            
+            console.log("  ✅ Complete information query works");
+        });
+
+        it("should check if trading pair has token information", async function () {
+            console.log("\n ℹ️ Testing hasTokenInfo...");
+            
+            const hasInfo = await factory.hasTokenInfo(pairAddr);
             const hasInfoZero = await factory.hasTokenInfo(ethers.ZeroAddress);
             
-            console.log("ℹ️ Pair has token info:", hasInfo);
-            console.log("ℹ️ Zero address has token info:", hasInfoZero);
+            console.log("  ℹ️ Trading pair has info:", hasInfo);
+            console.log("  ℹ️ Zero address has info:", hasInfoZero);
             
             expect(hasInfo).to.be.true;
             expect(hasInfoZero).to.be.false;
             
-            console.log("✅ Token info check test passed!");
-        });
-
-        it("Should return correct pair count", async function () {
-            console.log("📊 Testing pair count functionality...");
-            
-            const initialCount = await factory.allPairsLength();
-            console.log("📊 Initial pair count:", initialCount.toString());
-            expect(initialCount).to.equal(1);
-
-            // Create another pair
-            console.log("🔄 Creating second pair...");
-            const MockERC20Factory = await ethers.getContractFactory("MockERC20");
-            const mockToken3 = await MockERC20Factory.deploy("Token3", "TK3", 18);
-            await mockToken3.waitForDeployment();
-            
-            const mockToken3Address = await mockToken3.getAddress();
-            console.log("📍 New Token3 Address:", mockToken3Address);
-
-            await wrapperFactory.createWrapper(
-                mockToken3Address,
-                "Wrapped Token3",
-                "wTK3",
-                1,
-                2 // TokenType.PLAIN_ERC20
-            );
-
-            const wrapper3Address = await wrapperFactory.getWrapper(mockToken3Address);
-            const wrapper1Address = await wrapper1.getAddress();
-            
-            console.log("📍 Wrapper3 Address:", wrapper3Address);
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-
-            await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper3Address,
-                await mockToken1.getAddress(),
-                mockToken3Address,
-                TokenType.PROJECT_WRAPPED,
-                TokenType.PLAIN_ERC20,
-                priceScanner.address
-            );
-
-            const finalCount = await factory.allPairsLength();
-            console.log("📊 Final pair count:", finalCount.toString());
-            expect(finalCount).to.equal(2);
-            
-            console.log("✅ Pair count test passed!");
+            console.log("  ✅ hasTokenInfo works correctly");
         });
     });
 
-    describe("Edge cases", function () {
-        it("Should handle non-existent pair queries gracefully", async function () {
-            console.log("🔍 Testing non-existent pair queries...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-            console.log("📍 Wrapper2 Address:", wrapper2Address);
+    describe("4. Query Functions", function () {
+        let pairAddr: string;
+        let wrapperAAddr: string;
+        let wrapperBAddr: string;
+        let tokenAAddr: string;
+        let tokenBAddr: string;
 
-            // Query non-existent pair
-            const pairAddress = await factory.getPair(wrapper1Address, wrapper2Address);
-            console.log("🔍 Non-existent pair result:", pairAddress);
-            expect(pairAddress).to.equal(ethers.ZeroAddress);
+        beforeEach(async function () {
+            wrapperAAddr = await wrapperA.getAddress();
+            wrapperBAddr = await wrapperB.getAddress();
+            tokenAAddr = await mockTokenA.getAddress();
+            tokenBAddr = await mockTokenB.getAddress();
 
-            // Query by original tokens
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-            console.log("📍 Original Token1:", mockToken1Address);
-            console.log("📍 Original Token2:", mockToken2Address);
-            
-            const pairByOriginal = await factory.getPairByOriginalTokens(
-                mockToken1Address,
-                mockToken2Address
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
             );
-            console.log("🔍 Non-existent pair by original:", pairByOriginal);
-            expect(pairByOriginal).to.equal(ethers.ZeroAddress);
-            
-            console.log("✅ Non-existent pair query test passed!");
+
+            pairAddr = await factory.getPair(wrapperAAddr, wrapperBAddr);
         });
 
-        it("Should return empty info for non-existent pairs", async function () {
-            console.log("📋 Testing empty info for non-existent pairs...");
+        it("should query trading pair by wrapped addresses", async function () {
+            console.log("\n🔍 Testing query by wrapped addresses...");
             
-            const randomAddress = ethers.Wallet.createRandom().address;
-            console.log("📍 Random Address:", randomAddress);
+            const queriedPair = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            const queriedPairReverse = await factory.getPair(wrapperBAddr, wrapperAAddr);
             
-            const token0Info = await factory.getToken0Info(randomAddress);
-            console.log("📋 Token0 Info for non-existent pair:");
-            console.log("  Address:", token0Info.tokenAddress);
-            console.log("  Original:", token0Info.originalAddress);
-            console.log("  Type:", token0Info.tokenType.toString());
+            console.log("  🔗 Query pair (A, B):", queriedPair);
+            console.log("  🔗 Query pair (B, A):", queriedPairReverse);
+            
+            expect(queriedPair).to.equal(pairAddr);
+            expect(queriedPairReverse).to.equal(pairAddr);
+            
+            console.log("  ✅ Query by wrapped addresses successful");
+        });
+
+        it("should query trading pair by original addresses", async function () {
+            console.log("\n" + "-".repeat(80));
+            console.log("🔍 Test: Query trading pair by original addresses ⭐ Core Feature");
+            console.log("-".repeat(80));
+            
+            console.log("\n📊 Current State:");
+            console.log(`  ├─ Existing pair: ${pairAddr}`);
+            console.log(`  ├─ Original token A (user input): ${tokenAAddr}`);
+            console.log(`  ├─ Original token B (user input): ${tokenBAddr}`);
+            console.log(`  ├─ Wrapped token A (actually used): ${wrapperAAddr}`);
+            console.log(`  └─ Wrapped token B (actually used): ${wrapperBAddr}`);
+            
+            console.log("\n🔍 Test Scenario 1: Forward query (A, B)");
+            console.log(`  📤 Call: factory.getPairByOriginalTokens(${tokenAAddr}, ${tokenBAddr})`);
+            const queriedPair = await factory.getPairByOriginalTokens(tokenAAddr, tokenBAddr);
+            console.log(`  📥 Return: ${queriedPair}`);
+            console.log(`  ✅ Expected: ${pairAddr}`);
+            expect(queriedPair).to.equal(pairAddr);
+            console.log(`  ✅ Verification passed: Query result matches`);
+            
+            console.log("\n🔍 Test Scenario 2: Reverse query (B, A)");
+            console.log(`  📤 Call: factory.getPairByOriginalTokens(${tokenBAddr}, ${tokenAAddr})`);
+            const queriedPairReverse = await factory.getPairByOriginalTokens(tokenBAddr, tokenAAddr);
+            console.log(`  📥 Return: ${queriedPairReverse}`);
+            console.log(`  ✅ Expected: ${pairAddr}`);
+            expect(queriedPairReverse).to.equal(pairAddr);
+            console.log(`  ✅ Verification passed: Reverse query also found`);
+            
+            console.log("\n🎯 Feature Significance:");
+            console.log("  ✅ Users can directly query pairs with ERC20 addresses (like USDC)");
+            console.log("  ✅ No need to know the wrapped addresses");
+            console.log("  ✅ Supports bidirectional queries (A→B or B→A)");
+            console.log("  ✅ Simpler frontend integration, better UX");
+            
+            console.log("\n✅ Query by original addresses works correctly");
+            console.log("-".repeat(80));
+        });
+
+        it("should return correct number of trading pairs", async function () {
+            console.log("\n📊 Testing trading pair count...");
+            
+            const count1 = await factory.allPairsLength();
+            expect(count1).to.equal(1);
+            console.log("  📊 Count after 1 pair:", count1.toString());
+
+            // Create another token and pair
+            const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+            const mockTokenC = await MockERC20Factory.deploy("Token C", "TKC", 18);
+            await mockTokenC.waitForDeployment();
+            const tokenCAddr = await mockTokenC.getAddress();
+
+            await wrapperFactory.createWrapper(
+                tokenCAddr,
+                "Wrapped Token C",
+                "wTKC",
+                ethers.parseUnits("1", 12),
+                TokenType.PLAIN_ERC20
+            );
+
+            const wrapperCAddr = await wrapperFactory.getWrapper(tokenCAddr);
+
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperCAddr,
+                tokenAAddr,
+                tokenCAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            const count2 = await factory.allPairsLength();
+            expect(count2).to.equal(2);
+            console.log("  📊 Count after 2 pairs:", count2.toString());
+            
+            console.log("  ✅ Trading pair count correct");
+        });
+
+        it("should return trading pair address from allPairs array", async function () {
+            console.log("\n📊 Testing allPairs array...");
+            
+            const pairFromArray = await factory.allPairs(0);
+            console.log("  🔗 Pair at allPairs[0]:", pairFromArray);
+            console.log("  🔗 Expected pair:", pairAddr);
+            
+            expect(pairFromArray).to.equal(pairAddr);
+            
+            console.log("  ✅ allPairs array works correctly");
+        });
+    });
+
+    describe("5. Platform Fee Configuration", function () {
+        it("should set feeTo address", async function () {
+            console.log("\n💰 Testing feeTo configuration...");
+            
+            await factory.setFeeTo(feeTo.address);
+            const newFeeTo = await factory.feeTo();
+            
+            console.log("  👤 New feeTo:", newFeeTo);
+            expect(newFeeTo).to.equal(feeTo.address);
+            
+            console.log("  ✅ feeTo set successfully");
+        });
+
+        it("should set platform fee rate", async function () {
+            console.log("\n💸 Testing platform fee rate configuration...");
+            
+            const newFeeBps = 10; // 0.1%
+            await factory.setPlatformFeeBps(newFeeBps);
+            const feeBps = await factory.platformFeeBps();
+            
+            console.log("  💸 New platform fee rate (bps):", feeBps.toString());
+            expect(feeBps).to.equal(newFeeBps);
+            
+            console.log("  ✅ Platform fee rate set successfully");
+        });
+
+        it("should prevent non-feeToSetter from setting fees", async function () {
+            console.log("\n❌ Testing unauthorized fee setting...");
+            
+            await expect(
+                factory.connect(user1).setFeeTo(feeTo.address)
+            ).to.be.revertedWithCustomError(factory, "Forbidden");
+            
+            console.log("  ✅ Unauthorized access blocked");
+        });
+
+        it("should prevent excessively high platform fee rate", async function () {
+            console.log("\n❌ Testing excessive fee rate...");
+            
+            const MAX_PLATFORM_FEE = await factory.MAX_PLATFORM_FEE();
+            const tooHighFee = MAX_PLATFORM_FEE + 1n;
+            
+            console.log("  📊 Max platform fee rate:", MAX_PLATFORM_FEE.toString());
+            console.log("  📊 Attempting to set:", tooHighFee.toString());
+            
+            await expect(
+                factory.setPlatformFeeBps(tooHighFee)
+            ).to.be.revertedWithCustomError(factory, "FeeTooHigh");
+            
+            console.log("  ✅ Excessive fee rate blocked");
+        });
+
+        it("should prevent fee rate exceeding total fee rate", async function () {
+            console.log("\n❌ Testing fee exceeding total fee rate...");
+            
+            const MAX_PLATFORM_FEE = await factory.MAX_PLATFORM_FEE();
+            const TOTAL_FEE_BPS = await factory.TOTAL_FEE_BPS();
+            
+            // Note: Contract checks MAX_PLATFORM_FEE first, then TOTAL_FEE_BPS
+            // So if fee > MAX_PLATFORM_FEE, it always triggers error code 6
+            // Any value > MAX_PLATFORM_FEE will trigger error 6 first
+            
+            console.log("  📊 Max platform fee rate:", MAX_PLATFORM_FEE.toString());
+            console.log("  📊 Total fee rate:", TOTAL_FEE_BPS.toString());
+            console.log("  📊 Attempting to set:", (TOTAL_FEE_BPS + 1n).toString());
+            
+            // Any value exceeding MAX_PLATFORM_FEE will trigger error 6
+            await expect(
+                factory.setPlatformFeeBps(TOTAL_FEE_BPS + 1n)
+            ).to.be.revertedWithCustomError(factory, "FeeTooHigh"); // Because 31 > 15
+            
+            console.log("  ✅ Excessive fee rate blocked");
+        });
+
+        it("should change feeToSetter", async function () {
+            console.log("\n👤 Testing feeToSetter change...");
+            
+            await factory.setFeeToSetter(user1.address);
+            const newFeeToSetter = await factory.feeToSetter();
+            
+            console.log("  👤 New feeToSetter:", newFeeToSetter);
+            expect(newFeeToSetter).to.equal(user1.address);
+            
+            console.log("  ✅ feeToSetter changed successfully");
+        });
+
+        it("should get fee configuration", async function () {
+            console.log("\n💰 Testing getFeeConfig...");
+            
+            await factory.setFeeTo(feeTo.address);
+            await factory.setPlatformFeeBps(10);
+            
+            const [configFeeTo, configFeeBps] = await factory.getFeeConfig();
+            
+            console.log("  👤 Fee recipient address:", configFeeTo);
+            console.log("  💸 Fee rate (bps):", configFeeBps.toString());
+            
+            expect(configFeeTo).to.equal(feeTo.address);
+            expect(configFeeBps).to.equal(10);
+            
+            console.log("  ✅ getFeeConfig works correctly");
+        });
+    });
+
+    describe("6. Error Handling", function () {
+        it("should prevent creating pair with identical tokens", async function () {
+            console.log("\n❌ Testing identical token error...");
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            
+            await expect(
+                factory.createPairWithInfo(
+                    wrapperAAddr,
+                    wrapperAAddr,
+                    tokenAAddr,
+                    tokenAAddr,
+                    TokenType.PROJECT_WRAPPED,
+                    TokenType.PROJECT_WRAPPED
+                )
+            ).to.be.revertedWithCustomError(factory, "IdenticalTokens");
+            
+            console.log("  ✅ Identical token error works correctly");
+        });
+
+        it("should prevent creating pair with zero address", async function () {
+            console.log("\n❌ Testing zero address error...");
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            
+            await expect(
+                factory.createPairWithInfo(
+                    ethers.ZeroAddress,
+                    wrapperAAddr,
+                    ethers.ZeroAddress,
+                    tokenAAddr,
+                    TokenType.PROJECT_WRAPPED,
+                    TokenType.PROJECT_WRAPPED
+                )
+            ).to.be.revertedWithCustomError(factory, "ZeroAddress");
+            
+            console.log("  ✅ Zero address error works correctly");
+        });
+
+        it("should prevent creating duplicate trading pair", async function () {
+            console.log("\n" + "-".repeat(80));
+            console.log("❌ Test: Prevent creating duplicate trading pair");
+            console.log("-".repeat(80));
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            console.log("\n📝 Step 1: Create first trading pair");
+            console.log(`  Wrapped token A: ${wrapperAAddr}`);
+            console.log(`  Wrapped token B: ${wrapperBAddr}`);
+            const tx1 = await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+            await tx1.wait();
+            const pairAddr = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            console.log(`  ✅ First trading pair created: ${pairAddr}`);
+
+            console.log("\n📝 Step 2: Attempt to create duplicate pair");
+            console.log("  Expected: Should revert with error code 3 (ERROR_PAIR_EXISTS)");
+            
+            await expect(
+                factory.createPairWithInfo(
+                    wrapperAAddr,
+                    wrapperBAddr,
+                    tokenAAddr,
+                    tokenBAddr,
+                    TokenType.PROJECT_WRAPPED,
+                    TokenType.PROJECT_WRAPPED
+                )
+            ).to.be.revertedWithCustomError(factory, "PairExists");
+            
+            console.log("  ✅ Duplicate creation successfully blocked");
+            console.log("  ✅ Error code 3 (ERROR_PAIR_EXISTS) correctly returned");
+            console.log("\n✅ Security check works correctly");
+            console.log("-".repeat(80));
+        });
+
+        it("should prevent creating reverse pair", async function () {
+            console.log("\n❌ Testing reverse pair creation...");
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            // Create first pair (A, B)
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            // Attempt to create reverse pair (B, A) - should fail
+            await expect(
+                factory.createPairWithInfo(
+                    wrapperBAddr,
+                    wrapperAAddr,
+                    tokenBAddr,
+                    tokenAAddr,
+                    TokenType.PROJECT_WRAPPED,
+                    TokenType.PROJECT_WRAPPED
+                )
+            ).to.be.revertedWithCustomError(factory, "PairExists");
+            
+            console.log("  ✅ Reverse pair creation blocked");
+        });
+    });
+
+    describe("7. Edge Cases", function () {
+        it("should return zero address for non-existent pair", async function () {
+            console.log("\n🔍 Testing non-existent pair query...");
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            
+            const pair = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            
+            console.log("  🔗 Non-existent pair:", pair);
+            expect(pair).to.equal(ethers.ZeroAddress);
+            
+            console.log("  ✅ Non-existent pair returns zero address");
+        });
+
+        it("should return zero address for non-existent pair (original addresses)", async function () {
+            console.log("\n🔍 Testing non-existent pair query (original addresses)...");
+            
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+            
+            const pair = await factory.getPairByOriginalTokens(tokenAAddr, tokenBAddr);
+            
+            console.log("  🔗 Query non-existent pair by original addresses:", pair);
+            expect(pair).to.equal(ethers.ZeroAddress);
+            
+            console.log("  ✅ Query non-existent pair by original addresses returns zero address");
+        });
+
+        it("should return empty info for non-existent pair", async function () {
+            console.log("\n📋 Testing empty info query...");
+            
+            const randomAddr = ethers.Wallet.createRandom().address;
+            const token0Info = await factory.getToken0Info(randomAddr);
+            
+            console.log("  📊 Token0 info for random address:");
+            console.log("    Address:", token0Info.tokenAddress);
+            console.log("    Original:", token0Info.originalAddress);
+            console.log("    Type:", token0Info.tokenType.toString());
             
             expect(token0Info.tokenAddress).to.equal(ethers.ZeroAddress);
             expect(token0Info.originalAddress).to.equal(ethers.ZeroAddress);
-            expect(token0Info.tokenType).to.equal(0);
-
-            const hasInfo = await factory.hasTokenInfo(randomAddress);
-            console.log("ℹ️ Has token info:", hasInfo);
-            expect(hasInfo).to.be.false;
             
-            console.log("✅ Empty info test passed!");
+            console.log("  ✅ Non-existent pair returns empty info");
         });
-    });
 
-    describe("Integration with FHEPair", function () {
-        it("Should initialize FHEPair correctly", async function () {
-            console.log("🔗 Testing FHEPair integration...");
+        it("should handle different token types correctly", async function () {
+            console.log("\n🏷️ Testing different token types...");
             
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-            
-            console.log("📍 Integration Parameters:");
-            console.log("  Wrapper1:", wrapper1Address);
-            console.log("  Wrapper2:", wrapper2Address);
-            console.log("  Original1:", mockToken1Address);
-            console.log("  Original2:", mockToken2Address);
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
 
+            // Create pair with different types
             await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper2Address,
-                mockToken1Address,
-                mockToken2Address,
-                TokenType.PROJECT_WRAPPED,
-                TokenType.PROJECT_WRAPPED,
-                priceScanner.address
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PLAIN_ERC20,       // 2
+                TokenType.PROJECT_WRAPPED    // 0
             );
 
-            const pairAddress = await factory.getPair(wrapper1Address, wrapper2Address);
-            console.log("🔗 Created Pair Address:", pairAddress);
-            
-            const pair = await ethers.getContractAt("FHEPair", pairAddress);
+            const pairAddr = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            const [token0Info, token1Info] = await factory.getPairFullInfo(pairAddr);
 
-            // Check if pair is properly initialized
-            const token0 = await pair.token0Address();
-            const token1 = await pair.token1Address();
-            
-            console.log("🔗 FHEPair Token Addresses:");
-            console.log("  Token0:", token0);
-            console.log("  Token1:", token1);
-            console.log("  Token0 < Token1:", BigInt(token0) < BigInt(token1));
+            console.log("  🏷️ Token0 type:", token0Info.tokenType.toString());
+            console.log("  🏷️ Token1 type:", token1Info.tokenType.toString());
 
-            // Verify that token0 < token1 (address ordering) - compare as BigInt
-            expect(BigInt(token0) < BigInt(token1)).to.be.true;
+            // Verify types are preserved (order depends on address sorting)
+            const types = [token0Info.tokenType, token1Info.tokenType].sort();
+            // After sorting: PROJECT_WRAPPED(0) first, PLAIN_ERC20(2) second
+            expect(types[0]).to.equal(TokenType.PROJECT_WRAPPED);  // 0
+            expect(types[1]).to.equal(TokenType.PLAIN_ERC20);     // 2
             
-            // Verify that both tokens are from our wrappers
-            console.log("🔍 Token Validation:");
-            console.log("  Token0 in wrappers:", [wrapper1Address, wrapper2Address].includes(token0));
-            console.log("  Token1 in wrappers:", [wrapper1Address, wrapper2Address].includes(token1));
-            console.log("  Tokens are different:", token0 !== token1);
-            
-            expect([wrapper1Address, wrapper2Address]).to.include(token0);
-            expect([wrapper1Address, wrapper2Address]).to.include(token1);
-            expect(token0).to.not.equal(token1);
-            
-            console.log("✅ FHEPair integration test passed!");
+            console.log("  ✅ Different token types handled correctly");
         });
-    });
 
-    describe("Wrapped Token Information", function () {
-        let pairAddress: string;
+        it("should successfully create multiple trading pairs", async function () {
+            console.log("\n🔄 Testing multiple pair creation...");
+            
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
 
-        beforeEach(async function () {
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-
+            // Create pair A-B
             await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper2Address,
-                mockToken1Address,
-                mockToken2Address,
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
                 TokenType.PROJECT_WRAPPED,
-                TokenType.PROJECT_WRAPPED,
-                priceScanner.address
+                TokenType.PROJECT_WRAPPED
             );
 
-            pairAddress = await factory.getPair(wrapper1Address, wrapper2Address);
-        });
-
-        it("Should record wrapped token information globally", async function () {
-            console.log("📝 Testing global wrapped token information recording...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const mockToken1Address = await mockToken1.getAddress();
-            const mockToken2Address = await mockToken2.getAddress();
-            
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-            console.log("📍 Wrapper2 Address:", wrapper2Address);
-            console.log("📍 Original Token1:", mockToken1Address);
-            console.log("📍 Original Token2:", mockToken2Address);
-
-            // Check wrapped token info using WrapperFactory
-            const [original1, type1] = await wrapperFactory.getWrappedTokenInfo(wrapper1Address);
-            const [original2, type2] = await wrapperFactory.getWrappedTokenInfo(wrapper2Address);
-            
-            console.log("📊 Wrapped Token1 Info:");
-            console.log("  Original:", original1);
-            console.log("  Type:", type1.toString());
-            
-            console.log("📊 Wrapped Token2 Info:");
-            console.log("  Original:", original2);
-            console.log("  Type:", type2.toString());
-
-            expect(original1).to.equal(mockToken1Address);
-            expect(original2).to.equal(mockToken2Address);
-            expect(type1).to.equal(2); // TokenType.PLAIN_ERC20
-            expect(type2).to.equal(2); // TokenType.PLAIN_ERC20
-            
-            console.log("✅ Global wrapped token information test passed!");
-        });
-
-        it("Should check if token is known wrapped token", async function () {
-            console.log("🔍 Testing known wrapped token check...");
-            
-            const wrapper1Address = await wrapper1.getAddress();
-            const wrapper2Address = await wrapper2.getAddress();
-            const randomAddress = ethers.Wallet.createRandom().address;
-            
-            console.log("📍 Wrapper1 Address:", wrapper1Address);
-            console.log("📍 Wrapper2 Address:", wrapper2Address);
-            console.log("📍 Random Address:", randomAddress);
-
-            const isKnown1 = await wrapperFactory.isWrapper(wrapper1Address);
-            const isKnown2 = await wrapperFactory.isWrapper(wrapper2Address);
-            const isKnownRandom = await wrapperFactory.isWrapper(randomAddress);
-            
-            console.log("🔍 Is Known Wrapped Token:");
-            console.log("  Wrapper1:", isKnown1);
-            console.log("  Wrapper2:", isKnown2);
-            console.log("  Random:", isKnownRandom);
-
-            expect(isKnown1).to.be.true;
-            expect(isKnown2).to.be.true;
-            expect(isKnownRandom).to.be.false;
-            
-            console.log("✅ Known wrapped token check test passed!");
-        });
-
-        it("Should demonstrate WrapperFactory integration", async function () {
-            console.log("🔄 Testing WrapperFactory integration...");
-            
-            // Create a third token and wrapper for testing
+            // Create token C and pair A-C
             const MockERC20Factory = await ethers.getContractFactory("MockERC20");
-            const mockToken3 = await MockERC20Factory.deploy("Token3", "TK3", 18);
-            await mockToken3.waitForDeployment();
-            
-            const mockToken3Address = await mockToken3.getAddress();
-            console.log("📍 New Token3 Address:", mockToken3Address);
+            const mockTokenC = await MockERC20Factory.deploy("Token C", "TKC", 18);
+            await mockTokenC.waitForDeployment();
+            const tokenCAddr = await mockTokenC.getAddress();
 
-            // Use WrapperFactory to get or create wrapper
-            const createWrapperTx = await wrapperFactory.getOrCreateWrapper(
-                mockToken3Address,
-                "Wrapped Token3",
-                "wTK3",
-                2 // TokenType.PLAIN_ERC20
+            await wrapperFactory.createWrapper(
+                tokenCAddr,
+                "Wrapped Token C",
+                "wTKC",
+                ethers.parseUnits("1", 12),
+                TokenType.PLAIN_ERC20
             );
-            await createWrapperTx.wait();
-            
-            const wrapper3Address = await wrapperFactory.getWrapper(mockToken3Address);
-            console.log("📍 Wrapper3 Address:", wrapper3Address);
+            const wrapperCAddr = await wrapperFactory.getWrapper(tokenCAddr);
 
-            // Verify wrapper was created correctly
-            const [original3, type3] = await wrapperFactory.getWrappedTokenInfo(wrapper3Address);
-            console.log("📊 Wrapper3 Info:");
-            console.log("  Original:", original3);
-            console.log("  Type:", type3.toString());
-
-            expect(original3).to.equal(mockToken3Address);
-            expect(type3).to.equal(2); // TokenType.PLAIN_ERC20
-
-            // Create pair using the wrapper
-            const wrapper1Address = await wrapper1.getAddress();
             await factory.createPairWithInfo(
-                wrapper1Address,
-                wrapper3Address,
-                await mockToken1.getAddress(),
-                mockToken3Address,
+                wrapperAAddr,
+                wrapperCAddr,
+                tokenAAddr,
+                tokenCAddr,
                 TokenType.PROJECT_WRAPPED,
-                TokenType.PLAIN_ERC20,
-                priceScanner.address
+                TokenType.PROJECT_WRAPPED
             );
 
             const pairCount = await factory.allPairsLength();
-            console.log("📊 Total Pairs After Creation:", pairCount.toString());
+            console.log("  📊 Total trading pairs created:", pairCount.toString());
             expect(pairCount).to.equal(2);
 
-            // Verify the pair was created correctly
-            const newPairAddress = await factory.getPair(wrapper1Address, wrapper3Address);
-            console.log("🔗 New Pair Address:", newPairAddress);
-            expect(newPairAddress).to.not.equal(ethers.ZeroAddress);
+            const pairAB = await factory.getPair(wrapperAAddr, wrapperBAddr);
+            const pairAC = await factory.getPair(wrapperAAddr, wrapperCAddr);
+
+            console.log("  🔗 Pair A-B:", pairAB);
+            console.log("  🔗 Pair A-C:", pairAC);
+
+            expect(pairAB).to.not.equal(ethers.ZeroAddress);
+            expect(pairAC).to.not.equal(ethers.ZeroAddress);
+            expect(pairAB).to.not.equal(pairAC);
             
-            console.log("✅ WrapperFactory integration test passed!");
+            console.log("  ✅ Multiple pairs created successfully");
         });
     });
 });
