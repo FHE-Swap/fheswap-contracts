@@ -8,7 +8,11 @@ scripts/checkSelectors.js
 test/core/factory/FHEFactory.comprehensive.test.ts
 test/core/factory/FHEFactory.simple.test.ts
 test/helpers
-test/integration
+
+test/integration/localhost/query
+test/integration/localhost/remove
+test/integration/localhost/swap
+
 
 
 deploy/
