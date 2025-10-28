@@ -9,7 +9,7 @@ test/core/factory/FHEFactory.comprehensive.test.ts
 test/core/factory/FHEFactory.simple.test.ts
 test/helpers
 test/integration
-test/unit
+
 
 deploy/
 test/FHE.ts
