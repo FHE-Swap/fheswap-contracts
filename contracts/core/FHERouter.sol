@@ -2,7 +2,6 @@
 
 pragma solidity ^0.8.27;
 
-import "hardhat/console.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -18,7 +17,7 @@ import {FHE, euint64, euint128, externalEuint64} from "@fhevm/solidity/lib/FHE.s
 
 /**
  * @title FHERouter
- * @dev Router contract for CAMM (Confidential Automated Market Maker)
+ * @dev Router contract for FHESwap (Confidential Automated Market Maker)
  *
  * Core functionality:
  * - Provides unified interface for plaintext and encrypted versions
@@ -154,65 +153,39 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address to,
         uint256 deadline
     ) external nonReentrant notPaused validDeadline(deadline) returns (uint256 requestID) {
-        console.log("Router.addLiquidity start", tokenA, tokenB, msg.sender);
-        console.log(" Amounts:", amountA, amountB);
-        console.log(" To:", to);
-
         // Step 1: Validate inputs
-        console.log("Step 1: Validating inputs...");
         if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
         if (tokenA == tokenB) revert InvalidToken();
         if (amountA == 0 || amountB == 0) revert InvalidAmount();
         if (to == address(0)) revert InvalidToken();
-        console.log(" Step 1: Input validation passed");
 
         // Step 2: Strictly verify token types (must both be PLAIN_ERC20)
-        console.log(" Step 2: Determining token types...");
         TokenType typeA = determineTokenType(tokenA);
         TokenType typeB = determineTokenType(tokenB);
-        console.log(" Token types:", uint256(typeA), uint256(typeB));
 
         if (typeA != TokenType.PLAIN_ERC20 || typeB != TokenType.PLAIN_ERC20) {
             revert MustUseEncryptedVersion();
         }
-        console.log(" Step 2: Token type validation passed");
 
         // Step 3: Process tokenA (ERC20 → wrap)
-        console.log(" Step 3: Wrapping tokenA...");
         address wrappedTokenA = wrapToken(tokenA, amountA);
-        console.log(" Wrapped tokenA:", wrappedTokenA);
 
         // Step 4: Process tokenB (ERC20 → wrap)
-        console.log(" Step 4: Wrapping tokenB...");
         address wrappedTokenB = wrapToken(tokenB, amountB);
-        console.log(" Wrapped tokenB:", wrappedTokenB);
 
         // Step 5: Ensure Pair exists
-        console.log(" Step 5: Ensuring pair exists...");
         address pair = _ensurePairExists(wrappedTokenA, wrappedTokenB, tokenA, tokenB);
-        console.log(" Pair address:", pair);
 
         // Step 6: Router sets Pair as operator for both wrapped tokens
         // This allows Pair to call confidentialTransferFrom(Router, Pair, amount)
         IERC7984(wrappedTokenA).setOperator(pair, uint48(deadline));
-        console.log(" Set operator for tokenA");
         IERC7984(wrappedTokenB).setOperator(pair, uint48(deadline));
-        console.log(" Set operator for tokenB");
 
         // Step 7: Convert plaintext to encrypted
-        console.log(" Step 7: Converting to encrypted amounts...");
-        console.log("  amountA raw:", amountA);
-        console.log("  amountB raw:", amountB);
-        console.log("  amountA uint64:", uint64(amountA));
-        console.log("  amountB uint64:", uint64(amountB));
-
-        console.log("  Attempting FHE.asEuint64 approach...");
         // In Mock environment, FHE.asEuint64() generates deterministic pseudo-handles
         // This internally does: bytes32 handle = keccak256(abi.encodePacked("asEuint64", amountA));
         euint64 encryptedAmountA = FHE.asEuint64(uint64(amountA));
-        console.log("  encryptedAmountA created");
         euint64 encryptedAmountB = FHE.asEuint64(uint64(amountB));
-        console.log("  encryptedAmountB created");
 
         // Determine token order in pair (token0 < token1)
         (euint64 amount0, euint64 amount1) = uint160(wrappedTokenA) < uint160(wrappedTokenB)
@@ -220,20 +193,15 @@ contract FHERouter is Ownable, ReentrancyGuard {
             : (encryptedAmountB, encryptedAmountA);
 
         // Step 8: Allow Pair to access encrypted amounts
-        console.log(" Step 8: Allowing transient access...");
         FHE.allowTransient(amount0, pair);
         FHE.allowTransient(amount1, pair);
-        console.log(" Transient access granted");
 
         // Step 9: Call Pair.addLiquidity
-        console.log(" Step 9: Calling Pair.addLiquidity...");
         // Note: Pair will transfer tokens from Router and mint LP tokens directly to 'to'
         FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
-        console.log(" Pair.addLiquidity completed");
 
         // Emit event
         emit LiquidityAdded(msg.sender, pair, 0); // requestID is 0 for synchronous operations
-        console.log(" Router.addLiquidity completed successfully");
 
         return 0; // Synchronous operation, no requestID needed
     }
