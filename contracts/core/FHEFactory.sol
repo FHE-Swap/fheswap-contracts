@@ -52,7 +52,7 @@ contract FHEFactory {
         platformFeeBps = 5;         // Default 0.05% platform fee
     }
     
-    // ============ State Variables ============
+    // ============ Mappings and Storage ============
     
     // Basic mapping (keeps original functionality)
     // Mapping tracks created pairs: token address A => token address B => pair address
@@ -116,6 +116,11 @@ contract FHEFactory {
     // ============ Errors ============
     
     error FactoryError(uint8 code);
+    error Forbidden();
+    error FeeTooHigh();
+    error ExceedsTotalFee();
+    
+    // ============ Constants ============
     
     // Error codes
     uint8 public constant ERROR_IDENTICAL_TOKENS = 1;
@@ -316,7 +321,7 @@ contract FHEFactory {
      * @param _feeTo New platform fee recipient address (set to address(0) to disable platform fees)
      */
     function setFeeTo(address _feeTo) external {
-        require(msg.sender == feeToSetter, 'FHEFactory: FORBIDDEN');
+        if (msg.sender != feeToSetter) revert Forbidden();
         feeTo = _feeTo;
         emit PlatformFeeConfigUpdated(_feeTo, platformFeeBps);
     }
@@ -326,9 +331,9 @@ contract FHEFactory {
      * @param _platformFeeBps New platform fee in basis points (e.g., 5 = 0.05%, 10 = 0.1%)
      */
     function setPlatformFeeBps(uint16 _platformFeeBps) external {
-        require(msg.sender == feeToSetter, 'FHEFactory: FORBIDDEN');
-        require(_platformFeeBps <= MAX_PLATFORM_FEE, 'FEE_TOO_HIGH');
-        require(_platformFeeBps <= TOTAL_FEE_BPS, 'EXCEEDS_TOTAL_FEE');
+        if (msg.sender != feeToSetter) revert Forbidden();
+        if (_platformFeeBps > MAX_PLATFORM_FEE) revert FeeTooHigh();
+        if (_platformFeeBps > TOTAL_FEE_BPS) revert ExceedsTotalFee();
 
         platformFeeBps = _platformFeeBps;
         emit PlatformFeeConfigUpdated(feeTo, _platformFeeBps);
@@ -339,7 +344,7 @@ contract FHEFactory {
      * @param _feeToSetter New feeToSetter address
      */
     function setFeeToSetter(address _feeToSetter) external {
-        require(msg.sender == feeToSetter, 'FHEFactory: FORBIDDEN');
+        if (msg.sender != feeToSetter) revert Forbidden();
         feeToSetter = _feeToSetter;
         emit FeeToSetterChanged(_feeToSetter);
     }
