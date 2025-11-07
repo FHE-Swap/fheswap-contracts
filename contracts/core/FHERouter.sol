@@ -72,11 +72,38 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
     // ============ Events ============
 
-    event LiquidityAdded(address indexed user, address indexed pair, uint256 requestID);
+    event LiquidityAdded(
+        address indexed user,
+        address indexed pair,
+        address token0,
+        address token1,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 liquidity,
+        uint256 requestID,
+        uint256 timestamp
+    );
 
-    event LiquidityRemoved(address indexed user, address indexed pair, uint256 requestID);
+    event LiquidityRemoved(
+        address indexed user,
+        address indexed pair,
+        uint256 liquidity,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 requestID,
+        uint256 timestamp
+    );
 
-    event TokensSwapped(address indexed user, address indexed pair, uint256 requestID);
+    event TokensSwapped(
+        address indexed user,
+        address indexed pair,
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 amountOut,
+        uint256 requestID,
+        uint256 timestamp
+    );
 
     event TokenWrapped(
         address indexed user,
@@ -86,6 +113,8 @@ contract FHERouter is Ownable, ReentrancyGuard {
     );
 
     event OfficialFHETokenUpdated(address indexed token, bool isOfficial);
+
+    event TokensRescued(address indexed token, address indexed to, uint256 amount, uint256 timestamp);
 
     // ============ Errors ============
 
@@ -102,6 +131,8 @@ contract FHERouter is Ownable, ReentrancyGuard {
     error OperatorNotSet(address token, address user, address operator);
     error InvalidRefundType(); // Invalid refund type
     error InvalidOutputToken(); // Invalid output token
+    error InsufficientLiquidity(); // Insufficient liquidity for quote
+    error NoRescueNeeded(); // No tokens to rescue
 
     // ============ Constructor ============
 
@@ -200,8 +231,18 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Note: Pair will transfer tokens from Router and mint LP tokens directly to 'to'
         FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
 
-        // Emit event
-        emit LiquidityAdded(msg.sender, pair, 0); // requestID is 0 for synchronous operations
+        // Emit detailed event
+        emit LiquidityAdded(
+            msg.sender,
+            pair,
+            wrappedTokenA,
+            wrappedTokenB,
+            amountA,
+            amountB,
+            0, // liquidity amount (not tracked in sync mode)
+            0, // requestID
+            block.timestamp
+        );
 
         return 0; // Synchronous operation, no requestID needed
     }
@@ -304,7 +345,17 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Pair will mint LP tokens directly to 'to'
         FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
 
-        emit LiquidityAdded(msg.sender, pair, 0);
+        emit LiquidityAdded(
+            msg.sender,
+            pair,
+            processedTokenA,
+            processedTokenB,
+            0, // amount0 (encrypted, cannot emit)
+            0, // amount1 (encrypted, cannot emit)
+            0, // liquidity (not tracked)
+            0, // requestID
+            block.timestamp
+        );
 
         return 0; // Synchronous operation, no requestID needed
 
@@ -368,7 +419,15 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Pair will pull LP tokens from Router and send tokenA/tokenB to 'to' address
         FHEPair(pair).removeLiquidity(lpAmount, to, deadline);
 
-        emit LiquidityRemoved(msg.sender, pair, 0);
+        emit LiquidityRemoved(
+            msg.sender,
+            pair,
+            0, // liquidity (encrypted, cannot emit)
+            0, // amount0 (encrypted)
+            0, // amount1 (encrypted)
+            0, // requestID
+            block.timestamp
+        );
 
         return 0; // Synchronous operation, no requestID needed
     }
@@ -482,8 +541,17 @@ contract FHERouter is Ownable, ReentrancyGuard {
             deadline
         );
 
-        // Emit event
-        emit TokensSwapped(msg.sender, pair, 0);
+        // Emit detailed event
+        emit TokensSwapped(
+            msg.sender,
+            pair,
+            wrappedTokenIn,
+            processedTokenOut,
+            amountIn,
+            0, // amountOut (encrypted, cannot emit)
+            0, // requestID
+            block.timestamp
+        );
 
         return 0; // Synchronous operation, no requestID needed
     }
@@ -614,7 +682,16 @@ contract FHERouter is Ownable, ReentrancyGuard {
             deadline
         );
 
-        emit TokensSwapped(msg.sender, pair, 0);
+        emit TokensSwapped(
+            msg.sender,
+            pair,
+            processedTokenIn,
+            processedTokenOut,
+            0, // amountIn (encrypted, cannot emit)
+            0, // amountOut (encrypted, cannot emit)
+            0, // requestID
+            block.timestamp
+        );
 
         return 0; // Synchronous operation, no requestID needed
 
@@ -912,6 +989,23 @@ contract FHERouter is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @dev Calculate square root (Babylonian method)
+     */
+    function _sqrt(uint256 x) internal pure returns (uint256) {
+        if (x == 0) return 0;
+        
+        uint256 z = (x + 1) / 2;
+        uint256 y = x;
+        
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+        
+        return y;
+    }
+
+    /**
      * @dev Get processed token address (query only, no wrapping)
      */
     function _getProcessedTokenAddress(address token) internal view returns (address) {
@@ -971,6 +1065,240 @@ contract FHERouter is Ownable, ReentrancyGuard {
         }
 
         return pairAddress;
+    }
+
+    // ============================================
+    // ============ Quote Functions ============
+    // ============================================
+
+    /**
+     * @dev Get estimated output amount for a swap (plaintext version)
+     * @param tokenIn Input token address
+     * @param tokenOut Output token address
+     * @param amountIn Input amount
+     * @return amountOut Estimated output amount
+     * @return priceImpact Price impact in basis points (e.g., 50 = 0.5%)
+     *
+     * Note: This is an approximation based on obfuscated reserves (±7% variance)
+     */
+    function getAmountOut(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn
+    ) external view returns (uint256 amountOut, uint256 priceImpact) {
+        if (tokenIn == address(0) || tokenOut == address(0)) revert InvalidToken();
+        if (tokenIn == tokenOut) revert InvalidToken();
+        if (amountIn == 0) revert InvalidAmount();
+
+        // Get processed token addresses
+        address processedTokenIn = _getProcessedTokenAddress(tokenIn);
+        address processedTokenOut = _getProcessedTokenAddress(tokenOut);
+
+        // Get pair
+        address pair = FHEFactory(FHE_FACTORY).getPair(processedTokenIn, processedTokenOut);
+        if (pair == address(0)) revert PairNotFound();
+
+        // Get obfuscated reserves
+        (uint256 reserve0Obf, uint256 reserve1Obf) = FHEPair(pair).getObfuscatedReserves();
+        
+        if (reserve0Obf == 0 || reserve1Obf == 0) revert InsufficientLiquidity();
+
+        // Determine which reserve is for input token
+        address token0 = FHEPair(pair).token0Address();
+        bool isToken0In = (processedTokenIn == token0);
+
+        uint256 reserveIn = isToken0In ? reserve0Obf : reserve1Obf;
+        uint256 reserveOut = isToken0In ? reserve1Obf : reserve0Obf;
+
+        // Calculate output using constant product formula with 0.3% fee
+        // amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+        uint256 amountInWithFee = amountIn * 997;
+        uint256 numerator = amountInWithFee * reserveOut;
+        uint256 denominator = (reserveIn * 1000) + amountInWithFee;
+        amountOut = numerator / denominator;
+
+        // Calculate price impact: (amountOut / reserveOut) * 10000
+        priceImpact = (amountOut * 10000) / reserveOut;
+
+        return (amountOut, priceImpact);
+    }
+
+    /**
+     * @dev Get estimated liquidity amount for adding liquidity
+     * @param tokenA Token A address
+     * @param tokenB Token B address
+     * @param amountA Token A amount
+     * @param amountB Token B amount
+     * @return liquidity Estimated LP tokens to be minted
+     * @return actualAmountA Actual amount of token A that will be used
+     * @return actualAmountB Actual amount of token B that will be used
+     *
+     * Note: For existing pools, amounts may be adjusted to match current ratio
+     */
+    function quoteLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 amountA,
+        uint256 amountB
+    ) external view returns (uint256 liquidity, uint256 actualAmountA, uint256 actualAmountB) {
+        if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
+        if (tokenA == tokenB) revert InvalidToken();
+        if (amountA == 0 || amountB == 0) revert InvalidAmount();
+
+        // Get processed token addresses
+        address processedTokenA = _getProcessedTokenAddress(tokenA);
+        address processedTokenB = _getProcessedTokenAddress(tokenB);
+
+        // Get pair
+        address pair = FHEFactory(FHE_FACTORY).getPair(processedTokenA, processedTokenB);
+        
+        if (pair == address(0)) {
+            // New pair: all liquidity will be used
+            actualAmountA = amountA;
+            actualAmountB = amountB;
+            // For new pair: liquidity ≈ sqrt(amountA * amountB) - MINIMUM_LIQUIDITY
+            liquidity = _sqrt(amountA * amountB);
+            if (liquidity > 1000) {
+                liquidity -= 1000; // MINIMUM_LIQUIDITY
+            }
+        } else {
+            // Existing pair: get obfuscated reserves
+            (uint256 reserve0Obf, uint256 reserve1Obf) = FHEPair(pair).getObfuscatedReserves();
+            
+            if (reserve0Obf == 0 || reserve1Obf == 0) revert InsufficientLiquidity();
+
+            // Determine token order
+            address token0 = FHEPair(pair).token0Address();
+            (uint256 reserveA, uint256 reserveB) = (tokenA < tokenB)
+                ? (reserve0Obf, reserve1Obf)
+                : (reserve1Obf, reserve0Obf);
+
+            // Calculate optimal amounts based on current ratio
+            uint256 amountBOptimal = (amountA * reserveB) / reserveA;
+            
+            if (amountBOptimal <= amountB) {
+                actualAmountA = amountA;
+                actualAmountB = amountBOptimal;
+            } else {
+                uint256 amountAOptimal = (amountB * reserveA) / reserveB;
+                actualAmountA = amountAOptimal;
+                actualAmountB = amountB;
+            }
+
+            // Estimate LP tokens: min(amountA/reserveA, amountB/reserveB) * totalSupply
+            uint256 totalSupply = IERC7984(pair).totalSupply();
+            uint256 liquidityA = (actualAmountA * totalSupply) / reserveA;
+            uint256 liquidityB = (actualAmountB * totalSupply) / reserveB;
+            liquidity = liquidityA < liquidityB ? liquidityA : liquidityB;
+        }
+
+        return (liquidity, actualAmountA, actualAmountB);
+    }
+
+    /**
+     * @dev Get estimated token amounts for removing liquidity
+     * @param tokenA Token A address
+     * @param tokenB Token B address
+     * @param liquidity LP token amount to burn
+     * @return amountA Estimated token A amount to receive
+     * @return amountB Estimated token B amount to receive
+     *
+     * Note: Based on obfuscated reserves (±7% variance)
+     */
+    function quoteRemoveLiquidity(
+        address tokenA,
+        address tokenB,
+        uint256 liquidity
+    ) external view returns (uint256 amountA, uint256 amountB) {
+        if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
+        if (tokenA == tokenB) revert InvalidToken();
+        if (liquidity == 0) revert InvalidAmount();
+
+        // Get processed token addresses
+        address processedTokenA = _getProcessedTokenAddress(tokenA);
+        address processedTokenB = _getProcessedTokenAddress(tokenB);
+
+        // Get pair
+        address pair = FHEFactory(FHE_FACTORY).getPair(processedTokenA, processedTokenB);
+        if (pair == address(0)) revert PairNotFound();
+
+        // Get obfuscated reserves and total supply
+        (uint256 reserve0Obf, uint256 reserve1Obf) = FHEPair(pair).getObfuscatedReserves();
+        uint256 totalSupply = IERC7984(pair).totalSupply();
+
+        if (totalSupply == 0) revert InsufficientLiquidity();
+
+        // Determine token order
+        address token0 = FHEPair(pair).token0Address();
+        (uint256 reserveA, uint256 reserveB) = (processedTokenA == token0)
+            ? (reserve0Obf, reserve1Obf)
+            : (reserve1Obf, reserve0Obf);
+
+        // Calculate proportional amounts: amount = (liquidity * reserve) / totalSupply
+        amountA = (liquidity * reserveA) / totalSupply;
+        amountB = (liquidity * reserveB) / totalSupply;
+
+        return (amountA, amountB);
+    }
+
+    // ============================================
+    // ============ Emergency Functions ============
+    // ============================================
+
+    /**
+     * @dev Rescue tokens accidentally sent to Router
+     * @param token Token address to rescue
+     * @param to Recipient address
+     * @param amount Amount to rescue
+     *
+     * Security: Only owner can call, prevents rescuing tokens during active operations
+     */
+    function rescueTokens(
+        address token,
+        address to,
+        uint256 amount
+    ) external onlyOwner nonReentrant {
+        if (token == address(0)) revert InvalidToken();
+        if (to == address(0)) revert InvalidToken();
+        if (amount == 0) revert NoRescueNeeded();
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance == 0) revert NoRescueNeeded();
+        if (amount > balance) revert InvalidAmount();
+
+        // Transfer tokens to recipient
+        IERC20(token).safeTransfer(to, amount);
+
+        emit TokensRescued(token, to, amount, block.timestamp);
+    }
+
+    /**
+     * @dev Rescue ERC7984 tokens accidentally sent to Router
+     * @param token ERC7984 token address
+     * @param to Recipient address
+     * @param amount Amount to rescue (plaintext for owner operations)
+     *
+     * Note: For ERC7984 tokens, owner must know the balance
+     */
+    function rescueConfidentialTokens(
+        address token,
+        address to,
+        uint256 amount
+    ) external onlyOwner nonReentrant {
+        if (token == address(0)) revert InvalidToken();
+        if (to == address(0)) revert InvalidToken();
+        if (amount == 0) revert NoRescueNeeded();
+
+        // Convert to encrypted amount
+        euint64 encryptedAmount = FHE.asEuint64(uint64(amount));
+        
+        // Set recipient as operator temporarily
+        IERC7984(token).setOperator(address(this), uint48(block.timestamp + 300));
+
+        // Transfer confidential tokens
+        IERC7984(token).confidentialTransfer(to, encryptedAmount);
+
+        emit TokensRescued(token, to, amount, block.timestamp);
     }
 
     // ============================================
