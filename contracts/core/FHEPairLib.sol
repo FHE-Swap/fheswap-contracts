@@ -29,7 +29,16 @@ library FHEPairLib {
         // else z = 0 (default value)
     }
 
-    function computeRNG(uint16 max, uint16 minAdd) public returns (euint16) {
+    /**
+     * @dev Compute random number with optional minimum value
+     * @param max Maximum value (0 means full range)
+     * @param minAdd Minimum value to ensure (0 means no minimum)
+     * @return randomNumber Encrypted random number
+     *
+     * Note: If minAdd > 0, ensures randomNumber >= minAdd
+     *       If randomNumber < minAdd, adds minAdd; otherwise keeps original value
+     */
+    function computeRNG(uint16 max, uint16 minAdd) internal returns (euint16) {
         euint16 randomNumber = (max == 0) ? FHE.randEuint16() : FHE.randEuint16(max);
         if (minAdd != 0) {
             ebool tooSmall = FHE.lt(randomNumber, minAdd);
@@ -39,6 +48,18 @@ library FHEPairLib {
         return randomNumber;
     }
 
+    /**
+     * @dev Compute obfuscated reserves for privacy-preserving price queries
+     * @param reserve0 Token 0 reserve (encrypted)
+     * @param reserve1 Token 1 reserve (encrypted)
+     * @param scalingFactor Scaling factor for obfuscation
+     * @return _obfuscatedReserve0 Obfuscated reserve 0 (encrypted)
+     * @return _obfuscatedReserve1 Obfuscated reserve 1 (encrypted)
+     *
+     * Note: Adds random noise (±7% variance) to reserves for privacy
+     *       Lower bound calculation may underflow if scaledPercentage > scalingFactor,
+     *       but FHE operations handle this gracefully
+     */
     function computeObfuscatedReserves(
         euint64 reserve0,
         euint64 reserve1,
@@ -66,6 +87,18 @@ library FHEPairLib {
         return (_obfuscatedReserve0, _obfuscatedReserve1);
     }
 
+    /**
+     * @dev Compute add liquidity operation variables
+     * @param reserve0 Token 0 reserve (encrypted)
+     * @param reserve1 Token 1 reserve (encrypted)
+     * @param currentLPSupply Current LP token supply (encrypted)
+     * @return divLowerPart0 Division lower part for token 0 (encrypted)
+     * @return divLowerPart1 Division lower part for token 1 (encrypted)
+     * @return partialUpperPart0 Partial upper part for token 0 (encrypted)
+     * @return partialUpperPart1 Partial upper part for token 1 (encrypted)
+     *
+     * Note: Uses random multipliers to obfuscate division operations
+     */
     function computeAddLiquidity(
         euint64 reserve0,
         euint64 reserve1,
@@ -83,6 +116,26 @@ library FHEPairLib {
         return (divLowerPart0, divLowerPart1, partialUpperPart0, partialUpperPart1);
     }
 
+    /**
+     * @dev Compute add liquidity callback - calculates actual amounts and LP tokens to mint
+     * @param sentAmount0 Sent amount of token 0 (encrypted)
+     * @param sentAmount1 Sent amount of token 1 (encrypted)
+     * @param partialUpperPart0 Partial upper part for token 0 (encrypted)
+     * @param partialUpperPart1 Partial upper part for token 1 (encrypted)
+     * @param divLowerPart0 Division lower part for token 0 (decrypted)
+     * @param divLowerPart1 Division lower part for token 1 (decrypted)
+     * @param priceToken0 Price of token 0 (for ratio calculation)
+     * @param priceToken1 Price of token 1 (for ratio calculation)
+     * @param scalingFactor Scaling factor for price calculation
+     * @return refundAmount0 Refund amount for token 0 (encrypted)
+     * @return refundAmount1 Refund amount for token 1 (encrypted)
+     * @return mintAmount LP tokens to mint (encrypted)
+     * @return amount0 Actual amount of token 0 used (encrypted)
+     * @return amount1 Actual amount of token 1 used (encrypted)
+     *
+     * Note: Adjusts amounts to match pool ratio, refunds excess
+     *       Division by zero is prevented by ensuring divLowerPart > 0 in calling contract
+     */
     function computeAddLiquidityCallback(
         euint64 sentAmount0,
         euint64 sentAmount1,
@@ -117,6 +170,20 @@ library FHEPairLib {
         return (refundAmount0, refundAmount1, mintAmount, amount0, amount1);
     }
 
+    /**
+     * @dev Compute remove liquidity operation variables
+     * @param reserve0 Token 0 reserve (encrypted)
+     * @param reserve1 Token 1 reserve (encrypted)
+     * @param sentLP LP tokens to burn (encrypted)
+     * @param currentLPSupply128 Current LP token supply (encrypted)
+     * @return divUpperPart0 Division upper part for token 0 (encrypted)
+     * @return divUpperPart1 Division upper part for token 1 (encrypted)
+     * @return divLowerPart0 Division lower part for token 0 (encrypted)
+     * @return divLowerPart1 Division lower part for token 1 (encrypted)
+     *
+     * Note: Uses random multipliers to obfuscate division operations
+     *       Division by zero is prevented by ensuring currentLPSupply128 > 0 in calling contract
+     */
     function computeRemoveLiquidity(
         euint64 reserve0,
         euint64 reserve1,
@@ -137,6 +204,21 @@ library FHEPairLib {
         return (divUpperPart0, divUpperPart1, divLowerPart0, divLowerPart1);
     }
 
+    /**
+     * @dev Internal swap computation using constant product formula with 0.3% fee
+     * @param sent0 Amount of token 0 sent (encrypted)
+     * @param sent1 Amount of token 1 sent (encrypted)
+     * @param reserve0 Token 0 reserve (encrypted)
+     * @param reserve1 Token 1 reserve (encrypted)
+     * @return divUpperPart0 Division upper part for token 0 output (encrypted)
+     * @return divUpperPart1 Division upper part for token 1 output (encrypted)
+     * @return divLowerPart0 Division lower part for token 0 output (encrypted)
+     * @return divLowerPart1 Division lower part for token 1 output (encrypted)
+     *
+     * Formula: amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+     * Note: Uses random multipliers to obfuscate division operations
+     *       Division by zero is prevented by ensuring reserves > 0 in calling contract
+     */
     function _computeSwapInternal(
         euint64 sent0,
         euint64 sent1,
