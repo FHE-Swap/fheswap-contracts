@@ -5,9 +5,11 @@ pragma solidity ^0.8.27;
 import {FHE, euint64, externalEuint64} from "@fhevm/solidity/lib/FHE.sol";
 import {IERC7984} from "../confidential-tokens/base/IERC7984.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20Wrapper} from "../confidential-tokens/extensions/IERC20Wrapper.sol";
 import {WrapperFactory} from "../confidential-tokens/extensions/WrapperFactory.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title TokenConverter
@@ -29,7 +31,9 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
  * - Handle async logic for official FHE conversion
  * - Support whitelist management for official FHE tokens
  */
-contract TokenConverter is Ownable {
+contract TokenConverter is Ownable, ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ============ State Variables ============
 
     /// @dev Router address, only Router can initiate conversion
@@ -71,28 +75,35 @@ contract TokenConverter is Ownable {
     event OfficialFHERegistered(
         address indexed officialFHE,
         address indexed underlying,
-        address indexed officialWrapper
+        address indexed officialWrapper,
+        uint256 timestamp
     );
 
-    event OfficialFHERemoved(address indexed officialFHE);
+    event OfficialFHERemoved(
+        address indexed officialFHE,
+        uint256 timestamp
+    );
 
     event ConversionRequested(
         uint256 indexed requestID,
         address indexed user,
         address indexed officialFHE,
-        address targetContract
+        address targetContract,
+        uint256 timestamp
     );
 
     event ConversionCompleted(
         uint256 indexed requestID,
         address indexed user,
         address projectWrapped,
-        uint256 wrappedAmount
+        uint256 wrappedAmount,
+        uint256 timestamp
     );
 
     event ConversionFailed(
         uint256 indexed requestID,
-        string reason
+        string reason,
+        uint256 timestamp
     );
 
     // ============ Errors ============
@@ -103,8 +114,11 @@ contract TokenConverter is Ownable {
     error ConversionAlreadyCompleted(uint256 requestID);
     error ConversionNotFound(uint256 requestID);
     error InvalidAddress();
+    error InvalidAmount();
     error TargetCallFailed();
     error ArrayLengthMismatch();
+    error AlreadyRegistered(address token);
+    error NotRegistered(address token);
 
     // ============ Modifiers ============
 
@@ -135,6 +149,10 @@ contract TokenConverter is Ownable {
      * @param officialFHE Official FHE token address
      * @param underlying Underlying ERC20 token address
      * @param officialWrapper Official wrapper contract address
+     *
+     * Requirements:
+     * - All addresses must be non-zero
+     * - Token must not be already registered
      */
     function registerOfficialFHE(
         address officialFHE,
@@ -145,10 +163,14 @@ contract TokenConverter is Ownable {
             revert InvalidAddress();
         }
 
+        if (officialFHEToUnderlying[officialFHE] != address(0)) {
+            revert AlreadyRegistered(officialFHE);
+        }
+
         officialFHEToUnderlying[officialFHE] = underlying;
         officialFHEToWrapper[officialFHE] = officialWrapper;
 
-        emit OfficialFHERegistered(officialFHE, underlying, officialWrapper);
+        emit OfficialFHERegistered(officialFHE, underlying, officialWrapper, block.timestamp);
     }
 
     /**
@@ -156,40 +178,58 @@ contract TokenConverter is Ownable {
      * @param officialFHEs Official FHE token address array
      * @param underlyings Underlying ERC20 token address array
      * @param officialWrappers Official wrapper contract address array
+     *
+     * Requirements:
+     * - All arrays must have the same length
+     * - All addresses must be non-zero
+     * - Tokens must not be already registered
      */
     function registerOfficialFHEBatch(
         address[] calldata officialFHEs,
         address[] calldata underlyings,
         address[] calldata officialWrappers
     ) external onlyOwner {
-        if (
-            officialFHEs.length != underlyings.length ||
-            underlyings.length != officialWrappers.length
-        ) {
+        uint256 length = officialFHEs.length;
+        if (length != underlyings.length || length != officialWrappers.length) {
             revert ArrayLengthMismatch();
         }
 
-        for (uint256 i = 0; i < officialFHEs.length; i++) {
+        if (length == 0) {
+            revert ArrayLengthMismatch();
+        }
+
+        for (uint256 i = 0; i < length; i++) {
             if (officialFHEs[i] == address(0) || underlyings[i] == address(0) || officialWrappers[i] == address(0)) {
                 revert InvalidAddress();
+            }
+
+            if (officialFHEToUnderlying[officialFHEs[i]] != address(0)) {
+                revert AlreadyRegistered(officialFHEs[i]);
             }
 
             officialFHEToUnderlying[officialFHEs[i]] = underlyings[i];
             officialFHEToWrapper[officialFHEs[i]] = officialWrappers[i];
 
-            emit OfficialFHERegistered(officialFHEs[i], underlyings[i], officialWrappers[i]);
+            emit OfficialFHERegistered(officialFHEs[i], underlyings[i], officialWrappers[i], block.timestamp);
         }
     }
 
     /**
      * @dev Remove official FHE token registration
      * @param officialFHE Official FHE token address
+     *
+     * Requirements:
+     * - Token must be registered
      */
     function removeOfficialFHE(address officialFHE) external onlyOwner {
+        if (officialFHEToUnderlying[officialFHE] == address(0)) {
+            revert NotRegistered(officialFHE);
+        }
+
         delete officialFHEToUnderlying[officialFHE];
         delete officialFHEToWrapper[officialFHE];
 
-        emit OfficialFHERemoved(officialFHE);
+        emit OfficialFHERemoved(officialFHE, block.timestamp);
     }
 
     // ============ Core Functions ============
@@ -300,14 +340,37 @@ contract TokenConverter is Ownable {
      * @dev Emergency token withdrawal (owner only)
      * @param token Token address
      * @param to Recipient address
-     * @param amount Amount
+     * @param amount Amount to withdraw (0 means withdraw all balance)
+     *
+     * Security:
+     * - Only owner can call
+     * - Reentrancy protection
+     * - Uses SafeERC20 for safe token transfers
      */
     function emergencyWithdraw(
         address token,
         address to,
         uint256 amount
-    ) external onlyOwner {
+    ) external onlyOwner nonReentrant {
+        if (token == address(0)) revert InvalidAddress();
         if (to == address(0)) revert InvalidAddress();
-        IERC20(token).transfer(to, amount);
+
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance == 0) revert InvalidAmount();
+
+        uint256 withdrawAmount = (amount == 0) ? balance : amount;
+        if (withdrawAmount > balance) revert InvalidAmount();
+
+        IERC20(token).safeTransfer(to, withdrawAmount);
+    }
+
+    /**
+     * @dev Get contract token balance
+     * @param token Token address
+     * @return balance Token balance
+     */
+    function getTokenBalance(address token) external view returns (uint256 balance) {
+        if (token == address(0)) revert InvalidAddress();
+        return IERC20(token).balanceOf(address(this));
     }
 }
