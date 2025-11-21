@@ -30,10 +30,51 @@ contract FHEPair is ERC7984 {
     // Minimum liquidity locked forever in the first mint
     uint256 public constant MINIMUM_LIQUIDITY = 1000;
 
+    // Basis points denominator for fee calculations
+    uint16 public constant BPS_DENOMINATOR = 10000;
+
+    // Maximum slippage allowed (100%)
+    uint16 public constant MAX_SLIPPAGE_BPS = 10000;
+
+    // Lock status to prevent reentrancy
+    uint8 private unlocked = 1;
+
+    // Track if pair has been initialized
+    bool private initialized;
+
     // Events
     event LiquidityAdded(address indexed provider, address indexed to, uint256 timestamp);
     event LiquidityRemoved(address indexed provider, address indexed to, uint256 timestamp);
     event Swap(address indexed user, bool isToken0In, address indexed to, uint256 timestamp);
+    event Initialized(address indexed token0, address indexed token1);
+
+    // Modifiers
+    /**
+     * @dev Prevents reentrancy attacks
+     */
+    modifier lock() {
+        require(unlocked == 1, "FHEPair: LOCKED");
+        unlocked = 0;
+        _;
+        unlocked = 1;
+    }
+
+    /**
+     * @dev Ensures the pair has been initialized
+     */
+    modifier onlyInitialized() {
+        require(initialized, "FHEPair: NOT_INITIALIZED");
+        _;
+    }
+
+    /**
+     * @dev Validates deadline has not passed
+     * @param deadline The deadline timestamp to check
+     */
+    modifier ensure(uint256 deadline) {
+        require(block.timestamp <= deadline, "FHEPair: EXPIRED");
+        _;
+    }
 
     /**
      * @dev Constructor
@@ -43,10 +84,31 @@ contract FHEPair is ERC7984 {
     }
 
     /**
-     * @dev Initialize the pair
+     * @dev Initialize the pair with token addresses
+     * @param _token0 Address of the first token
+     * @param _token1 Address of the second token
+     * @param _factory Address of the factory contract
      */
     function initialize(address _token0, address _token1, address _factory) external {
-        // Core logic removed
+        require(!initialized, "FHEPair: ALREADY_INITIALIZED");
+        require(_token0 != address(0), "FHEPair: INVALID_TOKEN0");
+        require(_token1 != address(0), "FHEPair: INVALID_TOKEN1");
+        require(_token0 != _token1, "FHEPair: IDENTICAL_TOKENS");
+        require(msg.sender == factory, "FHEPair: FORBIDDEN");
+
+        // Set token addresses
+        token0Address = _token0;
+        token1Address = _token1;
+
+        // Update factory if provided
+        if (_factory != address(0)) {
+            factory = _factory;
+        }
+
+        // Mark as initialized
+        initialized = true;
+
+        emit Initialized(_token0, _token1);
     }
 
     /**
