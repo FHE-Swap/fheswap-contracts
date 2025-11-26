@@ -42,6 +42,11 @@ contract FHEPair is ERC7984 {
     // Track if pair has been initialized
     bool private initialized;
 
+    uint256 public immutable contractCreationTime;
+    uint256 private totalOperationCount;
+
+    uint256 private lastOperationTimestamp;
+
     // Events
     event LiquidityAdded(address indexed provider, address indexed to, uint256 timestamp);
     event LiquidityRemoved(address indexed provider, address indexed to, uint256 timestamp);
