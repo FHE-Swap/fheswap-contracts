@@ -116,6 +116,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
     event TokensRescued(address indexed token, address indexed to, uint256 amount, uint256 timestamp);
 
+    event PausedStateChanged(bool indexed newState, uint256 timestamp);
+
+    event DeadlineBufferUpdated(uint256 oldBuffer, uint256 newBuffer, uint256 timestamp);
+
     // ============ Errors ============
 
     error InvalidToken();
@@ -129,10 +133,15 @@ contract FHERouter is Ownable, ReentrancyGuard {
     error OnlyProjectWrappedToken(); // Only project wrapped tokens supported
     error OfficialFHENotSupported(); // Official FHE not supported yet
     error OperatorNotSet(address token, address user, address operator);
-    error InvalidRefundType(); // Invalid refund type
-    error InvalidOutputToken(); // Invalid output token
-    error InsufficientLiquidity(); // Insufficient liquidity for quote
-    error NoRescueNeeded(); // No tokens to rescue
+    error InvalidRefundType();
+    error InvalidOutputToken();
+    error InsufficientLiquidity();
+    error NoRescueNeeded();
+    error InvalidSlippage();
+    error ExcessiveSlippage();
+    error AmountTooSmall();
+    error AmountTooLarge();
+    error InvalidBuffer();
 
     // ============ Constructor ============
 
@@ -140,6 +149,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (_wrapperFactory == address(0)) revert InvalidToken();
         if (_fheFactory == address(0)) revert InvalidToken();
         if (_tokenConverter == address(0)) revert InvalidToken();
+        if (_wrapperFactory == _fheFactory || _wrapperFactory == _tokenConverter || _fheFactory == _tokenConverter) {
+            revert InvalidToken();
+        }
 
         WRAPPER_FACTORY = _wrapperFactory;
         FHE_FACTORY = _fheFactory;
@@ -188,11 +200,13 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
         if (tokenA == tokenB) revert InvalidToken();
         if (amountA == 0 || amountB == 0) revert InvalidAmount();
+        if (amountA > type(uint64).max || amountB > type(uint64).max) revert AmountTooLarge();
         if (to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
 
         // Step 2: Strictly verify token types (must both be PLAIN_ERC20)
-        TokenType typeA = determineTokenType(tokenA);
-        TokenType typeB = determineTokenType(tokenB);
+        TokenType typeA = _determineTokenType(tokenA);
+        TokenType typeB = _determineTokenType(tokenB);
 
         if (typeA != TokenType.PLAIN_ERC20 || typeB != TokenType.PLAIN_ERC20) {
             revert MustUseEncryptedVersion();
@@ -275,14 +289,15 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
         if (tokenA == tokenB) revert InvalidToken();
         if (to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
 
         // Step 2: Import encrypted data
         euint64 amountA = FHE.fromExternal(encryptedAmountA, inputProof);
         euint64 amountB = FHE.fromExternal(encryptedAmountB, inputProof);
 
         // Step 3: Determine token types
-        TokenType typeA = determineTokenType(tokenA);
-        TokenType typeB = determineTokenType(tokenB);
+        TokenType typeA = _determineTokenType(tokenA);
+        TokenType typeB = _determineTokenType(tokenB);
 
         // Step 4: Process tokenA based on type
         address processedTokenA;
@@ -389,6 +404,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
         if (tokenA == tokenB) revert InvalidToken();
         if (to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
 
         // Step 2: Import encrypted LP amount
         euint64 lpAmount = FHE.fromExternal(encryptedLpAmount, inputProof);
@@ -457,10 +473,13 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (tokenIn == address(0) || tokenOut == address(0)) revert InvalidToken();
         if (tokenIn == tokenOut) revert InvalidToken();
         if (amountIn == 0) revert InvalidAmount();
+        if (amountIn > type(uint64).max) revert AmountTooLarge();
+        if (slippageBps > 10000) revert ExcessiveSlippage();
         if (to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
 
         // Step 2: Strictly verify tokenIn type (must be PLAIN_ERC20)
-        TokenType typeIn = determineTokenType(tokenIn);
+        TokenType typeIn = _determineTokenType(tokenIn);
         if (typeIn != TokenType.PLAIN_ERC20) {
             revert MustUseEncryptedVersion();
         }
@@ -582,13 +601,15 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Step 1: Validate inputs
         if (tokenIn == address(0) || tokenOut == address(0)) revert InvalidToken();
         if (tokenIn == tokenOut) revert InvalidToken();
+        if (slippageBps > 10000) revert ExcessiveSlippage();
         if (to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
 
         // Step 2: Import encrypted data
         euint64 amountIn = FHE.fromExternal(encryptedAmountIn, inputProof);
 
         // Step 3: Determine token types
-        TokenType typeIn = determineTokenType(tokenIn);
+        TokenType typeIn = _determineTokenType(tokenIn);
         // Note: typeOut is determined later when processing tokenOut
 
         // Step 4: Process tokenIn based on type
@@ -723,7 +744,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
     ) external nonReentrant notPaused returns (address wrappedToken) {
         // Step 1: Validate inputs
         if (originalToken == address(0) || to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
         if (amount == 0) revert InvalidAmount();
+        if (amount > type(uint64).max) revert AmountTooLarge();
 
         // Step 2: Get or create wrapper
         string memory name;
@@ -798,6 +821,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
         uint256 requestID,
         RefundType refundType
     ) external nonReentrant {
+        if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
+        if (tokenA == tokenB) revert InvalidToken();
+
         // Step 1: Get processed token addresses
         address processedTokenA = _getProcessedTokenAddress(tokenA);
         address processedTokenB = _getProcessedTokenAddress(tokenB);
@@ -846,14 +872,18 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address tokenB,
         OperationType operationType
     ) external view returns (bool isValid, string[] memory missingPermissions) {
+        if (user == address(0)) revert InvalidToken();
+        if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
+        if (tokenA == tokenB) revert InvalidToken();
+
         // Initialize missing permissions array (max 3 items)
         string[] memory tempMissing = new string[](3);
         uint256 missingCount = 0;
 
         if (operationType == OperationType.ADD_LIQUIDITY) {
             // Check if tokenA and tokenB are ERC7984
-            TokenType typeA = determineTokenType(tokenA);
-            TokenType typeB = determineTokenType(tokenB);
+            TokenType typeA = _determineTokenType(tokenA);
+            TokenType typeB = _determineTokenType(tokenB);
 
             if (typeA == TokenType.PROJECT_WRAPPED) {
                 if (!IERC7984(tokenA).isOperator(user, address(this))) {
@@ -885,7 +915,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
             }
         } else if (operationType == OperationType.SWAP) {
             // Check if tokenIn is ERC7984
-            TokenType typeIn = determineTokenType(tokenA); // tokenA is tokenIn for swap
+            TokenType typeIn = _determineTokenType(tokenA); // tokenA is tokenIn for swap
 
             if (typeIn == TokenType.PROJECT_WRAPPED) {
                 if (!IERC7984(tokenA).isOperator(user, address(this))) {
@@ -911,7 +941,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
     /**
      * @dev Determine token type (with external ERC7984 protection)
      */
-    function determineTokenType(address token) internal view returns (TokenType) {
+    function _determineTokenType(address token) internal view returns (TokenType) {
         if (WrapperFactory(WRAPPER_FACTORY).isWrapper(token)) {
             return TokenType.PROJECT_WRAPPED;
         }
@@ -943,6 +973,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
      */
     function wrapToken(address token, uint256 amount) internal returns (address wrappedToken) {
         if (amount == 0) revert InvalidAmount();
+        if (amount > type(uint64).max) revert AmountTooLarge();
 
         // 1. Transfer ERC20 from user to Router
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
@@ -1043,8 +1074,8 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
         // 3. Pair doesn't exist, need to create it
         // Determine token types
-        TokenType typeA = determineTokenType(originalTokenA);
-        TokenType typeB = determineTokenType(originalTokenB);
+        TokenType typeA = _determineTokenType(originalTokenA);
+        TokenType typeB = _determineTokenType(originalTokenB);
 
         // Convert Router's TokenType to Factory's TokenType (same enum values)
         FHEFactory.TokenType factoryTypeA = FHEFactory.TokenType(uint8(typeA));
@@ -1089,6 +1120,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (tokenIn == address(0) || tokenOut == address(0)) revert InvalidToken();
         if (tokenIn == tokenOut) revert InvalidToken();
         if (amountIn == 0) revert InvalidAmount();
+        if (amountIn > type(uint64).max) revert AmountTooLarge();
 
         // Get processed token addresses
         address processedTokenIn = _getProcessedTokenAddress(tokenIn);
@@ -1100,8 +1132,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
         // Get obfuscated reserves
         (uint256 reserve0Obf, uint256 reserve1Obf) = FHEPair(pair).getObfuscatedReserves();
-        
+
         if (reserve0Obf == 0 || reserve1Obf == 0) revert InsufficientLiquidity();
+        if (reserve0Obf > type(uint128).max || reserve1Obf > type(uint128).max) revert AmountTooLarge();
 
         // Determine which reserve is for input token
         address token0 = FHEPair(pair).token0Address();
@@ -1115,9 +1148,11 @@ contract FHERouter is Ownable, ReentrancyGuard {
         uint256 amountInWithFee = amountIn * 997;
         uint256 numerator = amountInWithFee * reserveOut;
         uint256 denominator = (reserveIn * 1000) + amountInWithFee;
+        if (denominator == 0) revert InsufficientLiquidity();
         amountOut = numerator / denominator;
 
         // Calculate price impact: (amountOut / reserveOut) * 10000
+        if (reserveOut == 0) revert InsufficientLiquidity();
         priceImpact = (amountOut * 10000) / reserveOut;
 
         return (amountOut, priceImpact);
@@ -1144,6 +1179,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
         if (tokenA == tokenB) revert InvalidToken();
         if (amountA == 0 || amountB == 0) revert InvalidAmount();
+        if (amountA > type(uint64).max || amountB > type(uint64).max) revert AmountTooLarge();
 
         // Get processed token addresses
         address processedTokenA = _getProcessedTokenAddress(tokenA);
@@ -1174,12 +1210,14 @@ contract FHERouter is Ownable, ReentrancyGuard {
                 : (reserve1Obf, reserve0Obf);
 
             // Calculate optimal amounts based on current ratio
+            if (reserveA == 0) revert InsufficientLiquidity();
             uint256 amountBOptimal = (amountA * reserveB) / reserveA;
-            
+
             if (amountBOptimal <= amountB) {
                 actualAmountA = amountA;
                 actualAmountB = amountBOptimal;
             } else {
+                if (reserveB == 0) revert InsufficientLiquidity();
                 uint256 amountAOptimal = (amountB * reserveA) / reserveB;
                 actualAmountA = amountAOptimal;
                 actualAmountB = amountB;
@@ -1187,6 +1225,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
             // Estimate LP tokens: min(amountA/reserveA, amountB/reserveB) * totalSupply
             uint256 totalSupply = IERC7984(pair).totalSupply();
+            if (reserveA == 0 || reserveB == 0) revert InsufficientLiquidity();
             uint256 liquidityA = (actualAmountA * totalSupply) / reserveA;
             uint256 liquidityB = (actualAmountB * totalSupply) / reserveB;
             liquidity = liquidityA < liquidityB ? liquidityA : liquidityB;
@@ -1213,6 +1252,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
         if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
         if (tokenA == tokenB) revert InvalidToken();
         if (liquidity == 0) revert InvalidAmount();
+        if (liquidity > type(uint64).max) revert AmountTooLarge();
 
         // Get processed token addresses
         address processedTokenA = _getProcessedTokenAddress(tokenA);
@@ -1235,6 +1275,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
             : (reserve1Obf, reserve0Obf);
 
         // Calculate proportional amounts: amount = (liquidity * reserve) / totalSupply
+        if (totalSupply == 0) revert InsufficientLiquidity();
         amountA = (liquidity * reserveA) / totalSupply;
         amountB = (liquidity * reserveB) / totalSupply;
 
@@ -1260,6 +1301,7 @@ contract FHERouter is Ownable, ReentrancyGuard {
     ) external onlyOwner nonReentrant {
         if (token == address(0)) revert InvalidToken();
         if (to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
         if (amount == 0) revert NoRescueNeeded();
 
         uint256 balance = IERC20(token).balanceOf(address(this));
@@ -1287,7 +1329,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
     ) external onlyOwner nonReentrant {
         if (token == address(0)) revert InvalidToken();
         if (to == address(0)) revert InvalidToken();
+        if (to == address(this)) revert InvalidToken();
         if (amount == 0) revert NoRescueNeeded();
+        if (amount > type(uint64).max) revert AmountTooLarge();
 
         // Convert to encrypted amount
         euint64 encryptedAmount = FHE.asEuint64(uint64(amount));
@@ -1309,6 +1353,8 @@ contract FHERouter is Ownable, ReentrancyGuard {
      * @dev Set official FHE token status
      */
     function setOfficialFHEToken(address token, bool isOfficial) external onlyOwner {
+        if (token == address(0)) revert InvalidToken();
+        if (token == address(this)) revert InvalidToken();
         officialFHETokens[token] = isOfficial;
         emit OfficialFHETokenUpdated(token, isOfficial);
     }
@@ -1319,14 +1365,19 @@ contract FHERouter is Ownable, ReentrancyGuard {
      * @notice This value is only used for frontend suggestions, contract does not enforce deadline to be ahead of this time
      */
     function setDeadlineBuffer(uint256 newBuffer) external onlyOwner {
+        if (newBuffer > 86400) revert InvalidBuffer();
+        uint256 oldBuffer = deadlineBuffer;
         deadlineBuffer = newBuffer;
+        emit DeadlineBufferUpdated(oldBuffer, newBuffer, block.timestamp);
     }
 
     /**
      * @dev Emergency pause
      */
     function setPaused(bool _paused) external onlyOwner {
+        if (paused == _paused) return;
         paused = _paused;
+        emit PausedStateChanged(_paused, block.timestamp);
     }
 
     // ============================================
@@ -1344,5 +1395,162 @@ contract FHERouter is Ownable, ReentrancyGuard {
         address processedTokenB = _getProcessedTokenAddress(tokenB);
 
         return FHEFactory(FHE_FACTORY).getPair(processedTokenA, processedTokenB);
+    }
+
+    /**
+     * @dev Get wrapped token address for an ERC20 token
+     */
+    function getWrappedToken(address originalToken) external view returns (address wrappedToken) {
+        if (originalToken == address(0)) revert InvalidToken();
+        return WrapperFactory(WRAPPER_FACTORY).getWrapper(originalToken);
+    }
+
+    /**
+     * @dev Check if a token is a project wrapped token
+     */
+    function isProjectWrappedToken(address token) external view returns (bool) {
+        if (token == address(0)) revert InvalidToken();
+        return WrapperFactory(WRAPPER_FACTORY).isWrapper(token);
+    }
+
+    /**
+     * @dev Get pair info including reserves and total supply
+     */
+    function getPairInfo(
+        address tokenA,
+        address tokenB
+    ) external view returns (
+        address pair,
+        uint256 reserve0,
+        uint256 reserve1,
+        uint256 totalSupply,
+        address token0,
+        address token1
+    ) {
+        if (tokenA == address(0) || tokenB == address(0)) revert InvalidToken();
+        if (tokenA == tokenB) revert InvalidToken();
+
+        address processedTokenA = _getProcessedTokenAddress(tokenA);
+        address processedTokenB = _getProcessedTokenAddress(tokenB);
+
+        pair = FHEFactory(FHE_FACTORY).getPair(processedTokenA, processedTokenB);
+
+        if (pair == address(0)) {
+            return (address(0), 0, 0, 0, address(0), address(0));
+        }
+
+        token0 = FHEPair(pair).token0Address();
+        token1 = FHEPair(pair).token1Address();
+        (reserve0, reserve1) = FHEPair(pair).getObfuscatedReserves();
+        totalSupply = IERC7984(pair).totalSupply();
+    }
+
+    /**
+     * @dev Batch get pair addresses for multiple token pairs
+     */
+    function getBatchPairs(
+        address[] calldata tokensA,
+        address[] calldata tokensB
+    ) external view returns (address[] memory pairs) {
+        if (tokensA.length != tokensB.length) revert InvalidAmount();
+        if (tokensA.length == 0) revert InvalidAmount();
+        if (tokensA.length > 100) revert AmountTooLarge();
+
+        pairs = new address[](tokensA.length);
+
+        for (uint256 i = 0; i < tokensA.length; i++) {
+            if (tokensA[i] == address(0) || tokensB[i] == address(0)) {
+                pairs[i] = address(0);
+                continue;
+            }
+            if (tokensA[i] == tokensB[i]) {
+                pairs[i] = address(0);
+                continue;
+            }
+
+            try this.getPair(tokensA[i], tokensB[i]) returns (address pair) {
+                pairs[i] = pair;
+            } catch {
+                pairs[i] = address(0);
+            }
+        }
+    }
+
+    /**
+     * @dev Get router state for health checks
+     */
+    function getRouterState() external view returns (
+        bool isPaused,
+        uint256 currentDeadlineBuffer,
+        address wrapperFactory,
+        address fheFactory,
+        address tokenConverter
+    ) {
+        isPaused = paused;
+        currentDeadlineBuffer = deadlineBuffer;
+        wrapperFactory = WRAPPER_FACTORY;
+        fheFactory = FHE_FACTORY;
+        tokenConverter = TOKEN_CONVERTER;
+    }
+
+    /**
+     * @dev Calculate minimum deadline for current block
+     */
+    function getMinimumDeadline() external view returns (uint256) {
+        return block.timestamp + deadlineBuffer;
+    }
+
+    /**
+     * @dev Validate deadline is acceptable
+     */
+    function isValidDeadline(uint256 deadline) external view returns (bool) {
+        return deadline > block.timestamp;
+    }
+
+    /**
+     * @dev Get token type information
+     */
+    function getTokenTypeInfo(address token) external view returns (
+        TokenType tokenType,
+        bool isValid,
+        address processedAddress
+    ) {
+        if (token == address(0)) {
+            return (TokenType.PLAIN_ERC20, false, address(0));
+        }
+
+        try this.determineTokenType(token) returns (TokenType tType) {
+            tokenType = tType;
+            isValid = true;
+
+            if (tokenType == TokenType.PROJECT_WRAPPED) {
+                processedAddress = token;
+            } else if (tokenType == TokenType.PLAIN_ERC20) {
+                processedAddress = WrapperFactory(WRAPPER_FACTORY).getWrapper(token);
+            } else {
+                processedAddress = address(0);
+            }
+        } catch {
+            return (TokenType.PLAIN_ERC20, false, address(0));
+        }
+    }
+
+    /**
+     * @dev Public version of determineTokenType for external calls
+     */
+    function determineTokenType(address token) external view returns (TokenType) {
+        if (WrapperFactory(WRAPPER_FACTORY).isWrapper(token)) {
+            return TokenType.PROJECT_WRAPPED;
+        }
+
+        if (officialFHETokens[token]) {
+            return TokenType.OFFICIAL_FHE;
+        }
+
+        if (_isERC7984(token)) {
+            revert UnsupportedToken(token);
+        }
+
+        return TokenType.PLAIN_ERC20;
     }
 }
