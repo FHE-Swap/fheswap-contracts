@@ -877,4 +877,257 @@ describe("FHEFactory - Comprehensive Tests", function () {
             console.log("  ✅ Multiple pairs created successfully");
         });
     });
+
+    describe("8. Utility Functions & Statistics", function () {
+        it("should track factory statistics correctly", async function () {
+            console.log("\n📊 Testing factory statistics tracking...");
+
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            // Check initial stats
+            const [initialTotal, initialLastCreated, initialLength] = await factory.getFactoryStats();
+            console.log("  📊 Initial stats:");
+            console.log(`    Total created: ${initialTotal.toString()}`);
+            console.log(`    Last created time: ${initialLastCreated.toString()}`);
+            console.log(`    Current length: ${initialLength.toString()}`);
+
+            // Create first pair
+            const tx = await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+            const receipt = await tx.wait();
+            const blockTimestamp = (await ethers.provider.getBlock(receipt?.blockNumber))?.timestamp;
+
+            // Check stats after creating pair
+            const [total, lastCreated, length] = await factory.getFactoryStats();
+            console.log("  📊 After creating 1 pair:");
+            console.log(`    Total created: ${total.toString()}`);
+            console.log(`    Last created time: ${lastCreated.toString()}`);
+            console.log(`    Current length: ${length.toString()}`);
+
+            expect(total).to.equal(1);
+            expect(lastCreated).to.equal(blockTimestamp);
+            expect(length).to.equal(1);
+
+            console.log("  ✅ Factory statistics tracked correctly");
+        });
+
+        it("should track token pair count correctly", async function () {
+            console.log("\n📊 Testing token pair count tracking...");
+
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            // Check initial count
+            const initialCountA = await factory.tokenPairCount(wrapperAAddr);
+            const initialCountB = await factory.tokenPairCount(wrapperBAddr);
+            console.log(`  📊 Initial count for token A: ${initialCountA.toString()}`);
+            console.log(`  📊 Initial count for token B: ${initialCountB.toString()}`);
+
+            // Create pair
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            // Check count after creating pair
+            const countA = await factory.tokenPairCount(wrapperAAddr);
+            const countB = await factory.tokenPairCount(wrapperBAddr);
+            console.log(`  📊 Count for token A after pair: ${countA.toString()}`);
+            console.log(`  📊 Count for token B after pair: ${countB.toString()}`);
+
+            expect(countA).to.equal(1);
+            expect(countB).to.equal(1);
+
+            console.log("  ✅ Token pair count tracked correctly");
+        });
+
+        it("should batch get pairs correctly", async function () {
+            console.log("\n📊 Testing batch get pairs...");
+
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            // Create first pair
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            // Create second pair
+            const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+            const mockTokenC = await MockERC20Factory.deploy("Token C", "TKC", 18);
+            await mockTokenC.waitForDeployment();
+            const tokenCAddr = await mockTokenC.getAddress();
+
+            await wrapperFactory.createWrapper(
+                tokenCAddr,
+                "Wrapped Token C",
+                "wTKC",
+                ethers.parseUnits("1", 12),
+                TokenType.PLAIN_ERC20
+            );
+            const wrapperCAddr = await wrapperFactory.getWrapper(tokenCAddr);
+
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperCAddr,
+                tokenAAddr,
+                tokenCAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            // Get batch of pairs
+            const pairs = await factory.getPairsBatch(0, 2);
+            console.log(`  📊 Retrieved ${pairs.length} pairs`);
+            console.log(`    Pair 0: ${pairs[0]}`);
+            console.log(`    Pair 1: ${pairs[1]}`);
+
+            expect(pairs.length).to.equal(2);
+            expect(pairs[0]).to.not.equal(ethers.ZeroAddress);
+            expect(pairs[1]).to.not.equal(ethers.ZeroAddress);
+
+            console.log("  ✅ Batch get pairs works correctly");
+        });
+
+        it("should handle batch get with offset correctly", async function () {
+            console.log("\n📊 Testing batch get with offset...");
+
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            // Create pair
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            // Get batch with offset beyond length
+            const pairs = await factory.getPairsBatch(10, 5);
+            console.log(`  📊 Pairs with offset 10: ${pairs.length} pairs`);
+
+            expect(pairs.length).to.equal(0);
+
+            console.log("  ✅ Batch get with offset works correctly");
+        });
+
+        it("should check if pair exists correctly", async function () {
+            console.log("\n🔍 Testing pairExists function...");
+
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            // Check before creating pair
+            const existsBefore = await factory.pairExists(wrapperAAddr, wrapperBAddr);
+            console.log(`  📊 Pair exists before creation: ${existsBefore}`);
+            expect(existsBefore).to.be.false;
+
+            // Create pair
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            // Check after creating pair
+            const existsAfter = await factory.pairExists(wrapperAAddr, wrapperBAddr);
+            const existsReverse = await factory.pairExists(wrapperBAddr, wrapperAAddr);
+            console.log(`  📊 Pair exists after creation: ${existsAfter}`);
+            console.log(`  📊 Reverse check: ${existsReverse}`);
+
+            expect(existsAfter).to.be.true;
+            expect(existsReverse).to.be.true;
+
+            console.log("  ✅ pairExists function works correctly");
+        });
+
+        it("should get factory stats for multiple pairs", async function () {
+            console.log("\n📊 Testing factory stats with multiple pairs...");
+
+            const wrapperAAddr = await wrapperA.getAddress();
+            const wrapperBAddr = await wrapperB.getAddress();
+            const tokenAAddr = await mockTokenA.getAddress();
+            const tokenBAddr = await mockTokenB.getAddress();
+
+            // Create first pair
+            await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperBAddr,
+                tokenAAddr,
+                tokenBAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+
+            // Create second pair
+            const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+            const mockTokenC = await MockERC20Factory.deploy("Token C", "TKC", 18);
+            await mockTokenC.waitForDeployment();
+            const tokenCAddr = await mockTokenC.getAddress();
+
+            await wrapperFactory.createWrapper(
+                tokenCAddr,
+                "Wrapped Token C",
+                "wTKC",
+                ethers.parseUnits("1", 12),
+                TokenType.PLAIN_ERC20
+            );
+            const wrapperCAddr = await wrapperFactory.getWrapper(tokenCAddr);
+
+            const tx = await factory.createPairWithInfo(
+                wrapperAAddr,
+                wrapperCAddr,
+                tokenAAddr,
+                tokenCAddr,
+                TokenType.PROJECT_WRAPPED,
+                TokenType.PROJECT_WRAPPED
+            );
+            const receipt = await tx.wait();
+            const blockTimestamp = (await ethers.provider.getBlock(receipt?.blockNumber))?.timestamp;
+
+            // Get stats
+            const [total, lastCreated, length] = await factory.getFactoryStats();
+            console.log(`  📊 Total pairs created: ${total.toString()}`);
+            console.log(`  📊 Last creation time: ${lastCreated.toString()}`);
+            console.log(`  📊 Current pairs: ${length.toString()}`);
+
+            expect(total).to.equal(2);
+            expect(lastCreated).to.equal(blockTimestamp);
+            expect(length).to.equal(2);
+
+            console.log("  ✅ Factory stats work correctly for multiple pairs");
+        });
+    });
 });
