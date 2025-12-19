@@ -50,6 +50,13 @@ contract FHERouter is Ownable, ReentrancyGuard {
     /// @dev Official FHE tokens whitelist (reserved for future)
     mapping(address => bool) public officialFHETokens;
 
+    // Statistical tracking variables (non-critical)
+    uint256 public totalLiquidityAdds;       // Total add liquidity operations
+    uint256 public totalLiquidityRemoves;    // Total remove liquidity operations
+    uint256 public totalSwaps;               // Total swap operations
+    uint256 public totalWraps;               // Total wrap operations
+    mapping(address => uint256) public userOperationCount;  // Operations per user
+
     // ============ Enums ============
 
     enum TokenType {
@@ -245,6 +252,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Note: Pair will transfer tokens from Router and mint LP tokens directly to 'to'
         FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
 
+        // Update statistics (non-critical)
+        totalLiquidityAdds++;
+        userOperationCount[msg.sender]++;
+
         // Emit detailed event
         emit LiquidityAdded(
             msg.sender,
@@ -360,6 +371,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Pair will mint LP tokens directly to 'to'
         FHEPair(pair).addLiquidity(amount0, amount1, to, deadline);
 
+        // Update statistics (non-critical)
+        totalLiquidityAdds++;
+        userOperationCount[msg.sender]++;
+
         emit LiquidityAdded(
             msg.sender,
             pair,
@@ -434,6 +449,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // Step 9: Call Pair.removeLiquidity
         // Pair will pull LP tokens from Router and send tokenA/tokenB to 'to' address
         FHEPair(pair).removeLiquidity(lpAmount, to, deadline);
+
+        // Update statistics (non-critical)
+        totalLiquidityRemoves++;
+        userOperationCount[msg.sender]++;
 
         emit LiquidityRemoved(
             msg.sender,
@@ -559,6 +578,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
             to,
             deadline
         );
+
+        // Update statistics (non-critical)
+        totalSwaps++;
+        userOperationCount[msg.sender]++;
 
         // Emit detailed event
         emit TokensSwapped(
@@ -703,6 +726,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
             deadline
         );
 
+        // Update statistics (non-critical)
+        totalSwaps++;
+        userOperationCount[msg.sender]++;
+
         emit TokensSwapped(
             msg.sender,
             pair,
@@ -779,6 +806,10 @@ contract FHERouter is Ownable, ReentrancyGuard {
 
         // Step 5: Call wrapper.wrap() directly - wrapper will transfer from Router
         IERC20Wrapper(wrappedToken).wrap(to, amount);
+
+        // Update statistics (non-critical)
+        totalWraps++;
+        userOperationCount[msg.sender]++;
 
         emit TokenWrapped(msg.sender, originalToken, wrappedToken, amount);
 
@@ -1004,6 +1035,9 @@ contract FHERouter is Ownable, ReentrancyGuard {
         // 3. Approve and wrap
         IERC20(token).approve(wrappedToken, amount);
         IERC20Wrapper(wrappedToken).wrap(address(this), amount);
+
+        // Update statistics (non-critical)
+        totalWraps++;
 
         emit TokenWrapped(msg.sender, token, wrappedToken, amount);
 
@@ -1552,5 +1586,62 @@ contract FHERouter is Ownable, ReentrancyGuard {
         }
 
         return TokenType.PLAIN_ERC20;
+    }
+
+    // ============================================
+    // ============ Statistical Query Functions ============
+    // ============================================
+
+    /**
+     * @dev Get router operation statistics
+     * @return liquidityAdds Total liquidity add operations
+     * @return liquidityRemoves Total liquidity remove operations
+     * @return swaps Total swap operations
+     * @return wraps Total wrap operations
+     */
+    function getRouterStats() external view returns (
+        uint256 liquidityAdds,
+        uint256 liquidityRemoves,
+        uint256 swaps,
+        uint256 wraps
+    ) {
+        return (totalLiquidityAdds, totalLiquidityRemoves, totalSwaps, totalWraps);
+    }
+
+    /**
+     * @dev Get user operation count
+     * @param user User address
+     * @return count Number of operations by user
+     */
+    function getUserStats(address user) external view returns (uint256 count) {
+        return userOperationCount[user];
+    }
+
+    /**
+     * @dev Get comprehensive router analytics
+     * @return totalOps Total operations across all types
+     * @return liquidityAdds Total liquidity add operations
+     * @return liquidityRemoves Total liquidity remove operations
+     * @return swaps Total swap operations
+     * @return wraps Total wrap operations
+     * @return isPaused Current pause status
+     */
+    function getRouterAnalytics() external view returns (
+        uint256 totalOps,
+        uint256 liquidityAdds,
+        uint256 liquidityRemoves,
+        uint256 swaps,
+        uint256 wraps,
+        bool isPaused
+    ) {
+        totalOps = totalLiquidityAdds + totalLiquidityRemoves + totalSwaps + totalWraps;
+        return (
+            totalOps,
+            totalLiquidityAdds,
+            totalLiquidityRemoves,
+            totalSwaps,
+            totalWraps,
+            paused
+        );
     }
 }
