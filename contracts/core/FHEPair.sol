@@ -47,6 +47,12 @@ contract FHEPair is ERC7984 {
 
     uint256 private lastOperationTimestamp;
 
+    // Additional statistical tracking variables (non-critical)
+    uint256 public totalLiquidityAdds;       // Total liquidity add operations
+    uint256 public totalLiquidityRemoves;    // Total liquidity remove operations
+    uint256 public totalSwaps;               // Total swap operations
+    mapping(address => uint256) public userOperationCount;  // Operations per user
+
     // Events
     event LiquidityAdded(address indexed provider, address indexed to, uint256 timestamp);
     event LiquidityRemoved(address indexed provider, address indexed to, uint256 timestamp);
@@ -153,6 +159,11 @@ contract FHEPair is ERC7984 {
         // Mint LP tokens to the recipient
         _mint(to, liquidity);
 
+        // Update statistics (non-critical)
+        totalLiquidityAdds++;
+        userOperationCount[msg.sender]++;
+        lastOperationTimestamp = block.timestamp;
+
         emit LiquidityAdded(msg.sender, to, block.timestamp);
     }
 
@@ -194,6 +205,11 @@ contract FHEPair is ERC7984 {
         // Mint LP tokens to the recipient
         _mint(to, liquidity);
 
+        // Update statistics (non-critical)
+        totalLiquidityAdds++;
+        userOperationCount[msg.sender]++;
+        lastOperationTimestamp = block.timestamp;
+
         emit LiquidityAdded(msg.sender, to, block.timestamp);
     }
 
@@ -227,6 +243,10 @@ contract FHEPair is ERC7984 {
         uint256 operationId = uint256(keccak256(abi.encodePacked(block.timestamp, block.number, sender)));
 
         // Core logic removed
+
+        // Update statistics (non-critical)
+        totalLiquidityRemoves++;
+        userOperationCount[sender]++;
 
         emit LiquidityRemoved(sender, to, currentTimestamp);
     }
@@ -271,6 +291,10 @@ contract FHEPair is ERC7984 {
 
         // Core logic removed
 
+        // Update statistics (non-critical)
+        totalLiquidityRemoves++;
+        userOperationCount[sender]++;
+
         emit LiquidityRemoved(sender, to, currentTimestamp);
     }
 
@@ -305,5 +329,75 @@ contract FHEPair is ERC7984 {
         bytes calldata inputProof
     ) external {
         // Core logic removed
+    }
+
+    // ============ Utility Functions (Non-critical) ============
+
+    /**
+     * @dev Get pair token addresses
+     * @return token0 Address of token0
+     * @return token1 Address of token1
+     */
+    function getTokens() external view returns (address token0, address token1) {
+        return (token0Address, token1Address);
+    }
+
+    /**
+     * @dev Get pair statistics
+     * @return liquidityAdds Total liquidity add operations
+     * @return liquidityRemoves Total liquidity remove operations
+     * @return swaps Total swap operations
+     * @return lastOperation Timestamp of last operation
+     */
+    function getPairStats() external view returns (
+        uint256 liquidityAdds,
+        uint256 liquidityRemoves,
+        uint256 swaps,
+        uint256 lastOperation
+    ) {
+        return (totalLiquidityAdds, totalLiquidityRemoves, totalSwaps, lastOperationTimestamp);
+    }
+
+    /**
+     * @dev Get user operation count
+     * @param user User address
+     * @return count Number of operations by user
+     */
+    function getUserOperationCount(address user) external view returns (uint256 count) {
+        return userOperationCount[user];
+    }
+
+    /**
+     * @dev Check if pair is initialized
+     * @return True if initialized
+     */
+    function isInitialized() external view returns (bool) {
+        return initialized;
+    }
+
+    /**
+     * @dev Get pair age in seconds
+     * @return age Seconds since contract creation
+     */
+    function getPairAge() external view returns (uint256 age) {
+        return block.timestamp - contractCreationTime;
+    }
+
+    /**
+     * @dev Get complete pair information
+     * @return token0 Token0 address
+     * @return token1 Token1 address
+     * @return factoryAddr Factory address
+     * @return isInit Initialization status
+     * @return creationTime Contract creation timestamp
+     */
+    function getPairInfo() external view returns (
+        address token0,
+        address token1,
+        address factoryAddr,
+        bool isInit,
+        uint256 creationTime
+    ) {
+        return (token0Address, token1Address, factory, initialized, contractCreationTime);
     }
 }
