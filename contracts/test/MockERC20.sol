@@ -12,6 +12,12 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract MockERC20 is ERC20 {
     uint8 private _decimals;
 
+    // Statistical tracking variables (for testing and monitoring)
+    uint256 public totalMinted;        // Total amount minted
+    uint256 public totalBurned;        // Total amount burned
+    uint256 public mintCount;          // Number of mint operations
+    uint256 public burnCount;          // Number of burn operations
+
     /**
      * @dev Constructor
      * @param name_ Token name
@@ -40,6 +46,8 @@ contract MockERC20 is ERC20 {
      */
     function mint(address to, uint256 amount) public {
         _mint(to, amount);
+        totalMinted += amount;
+        mintCount++;
     }
 
     /**
@@ -49,5 +57,57 @@ contract MockERC20 is ERC20 {
      */
     function burn(address from, uint256 amount) public {
         _burn(from, amount);
+        totalBurned += amount;
+        burnCount++;
+    }
+
+    // ============ Utility Functions (For Testing) ============
+
+    /**
+     * @dev Batch mint to multiple addresses
+     * @param recipients Array of recipient addresses
+     * @param amounts Array of amounts to mint
+     */
+    function batchMint(address[] calldata recipients, uint256[] calldata amounts) external {
+        require(recipients.length == amounts.length, "Length mismatch");
+
+        for (uint256 i = 0; i < recipients.length; i++) {
+            mint(recipients[i], amounts[i]);
+        }
+    }
+
+    /**
+     * @dev Airdrop equal amounts to multiple addresses
+     * @param recipients Array of recipient addresses
+     * @param amount Amount to give each recipient
+     */
+    function airdrop(address[] calldata recipients, uint256 amount) external {
+        for (uint256 i = 0; i < recipients.length; i++) {
+            mint(recipients[i], amount);
+        }
+    }
+
+    /**
+     * @dev Faucet function for testing - mint fixed amount to caller
+     * @param amount Amount to mint to caller
+     */
+    function faucet(uint256 amount) external {
+        mint(msg.sender, amount);
+    }
+
+    /**
+     * @dev Get token statistics
+     * @return minted Total amount minted
+     * @return burned Total amount burned
+     * @return mints Number of mint operations
+     * @return burns Number of burn operations
+     */
+    function getStats() external view returns (
+        uint256 minted,
+        uint256 burned,
+        uint256 mints,
+        uint256 burns
+    ) {
+        return (totalMinted, totalBurned, mintCount, burnCount);
     }
 }
