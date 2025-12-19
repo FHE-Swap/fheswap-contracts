@@ -519,6 +519,189 @@ See [LICENSE](LICENSE) file for details.
 
 ---
 
+## 🛠️ Developer Tools & Utilities
+
+### Available Scripts
+
+```bash
+# Check function selectors for collision detection
+npx hardhat run scripts/checkSelectors.js
+
+# Extract standard JSON inputs for verification
+npx hardhat extract-standard-inputs
+
+# Extract with verbose logging
+npx hardhat extract-standard-inputs --verbose
+
+# Run without cleaning old files
+npx hardhat extract-standard-inputs --clean false
+```
+
+### Hardhat Tasks
+
+**Extract Standard Inputs**
+- Automatically extracts Solidity standard JSON inputs from build artifacts
+- Generates summary reports with statistics
+- Supports verbose logging and cleanup options
+- Outputs to `standard-inputs/` directory
+
+**Function Selector Analysis**
+- Analyzes function selectors across all contracts
+- Detects potential collisions
+- Groups by contract category (Router, Pair, Factory, Token)
+- Exports detailed JSON report
+
+### Project Statistics
+
+| Metric | Count |
+|--------|-------|
+| Core Contracts | 7 |
+| Confidential Token Contracts | 7 |
+| Test Files | 8 |
+| Test Scenarios | 60+ |
+| Lines of Contract Code | ~3,000 |
+| Lines of Test Code | ~3,500 |
+| Function Selectors | 40+ |
+
+---
+
+## ❓ FAQ
+
+### General Questions
+
+**Q: What is FHE and why is it important for DEXs?**
+
+A: Fully Homomorphic Encryption (FHE) allows computations on encrypted data without decryption. This enables completely private trading where amounts, balances, and reserves remain encrypted end-to-end, preventing MEV attacks and protecting trader privacy.
+
+**Q: How does FHESwap compare to traditional DEXs?**
+
+A: FHESwap provides the same AMM functionality as UniswapV2 but with complete privacy. All sensitive data remains encrypted, preventing frontrunning, sandwich attacks, and information leakage while maintaining trustless decentralization.
+
+**Q: What are the gas costs compared to regular DEXs?**
+
+A: FHE operations require additional computational resources (HCU - Homomorphic Computation Units). Expect 3-5x higher gas costs compared to traditional DEXs, but with significantly enhanced privacy guarantees.
+
+### Technical Questions
+
+**Q: Why use ERC7984 instead of custom confidential tokens?**
+
+A: ERC7984 is an emerging standard for confidential tokens with OpenZeppelin backing. Using standards ensures compatibility, security audits, and easier integration with other protocols.
+
+**Q: How does the slippage protection work with encrypted amounts?**
+
+A: The router calculates expected output based on current reserves and passes encrypted validation parameters to the pair. The pair performs FHE comparison to ensure actual output meets minimum requirements.
+
+**Q: What happens if a transaction fails mid-execution?**
+
+A: All operations use atomic transactions with proper revert mechanisms. Failed swaps/liquidity operations revert completely with no partial state changes. Refund mechanisms ensure users can recover funds if operations timeout.
+
+### Security Questions
+
+**Q: Has the code been audited?**
+
+A: The contracts follow OpenZeppelin and Zama best practices with comprehensive test coverage (60+ scenarios). A professional audit is planned before mainnet deployment.
+
+**Q: How is MEV prevented?**
+
+A: All transaction amounts are encrypted, making it impossible for MEV bots to analyze transaction value or implement profitable frontrunning/sandwich attacks.
+
+**Q: What about the random obfuscation factor? Can it be exploited?**
+
+A: The ±7% obfuscation provides approximate price discovery without revealing exact reserves. The variance is large enough to prevent precise arbitrage but small enough for useful price references.
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**Issue: `Build info directory not found`**
+
+```bash
+# Solution: Compile contracts first
+npx hardhat compile
+```
+
+**Issue: `FHEVM initialization failed`**
+
+```bash
+# Solution: Ensure you're in mock mode for local testing
+# Check hardhat.config.ts has fhevm mock enabled
+```
+
+**Issue: `Operator permission denied`**
+
+```solidity
+// Solution: Set router as operator before confidential operations
+confidentialToken.setOperator(address(router), deadline);
+```
+
+**Issue: `Test timeout errors`**
+
+```javascript
+// Solution: Increase timeout in test file
+this.timeout(180000); // 3 minutes
+```
+
+**Issue: `Insufficient allowance`**
+
+```solidity
+// Solution: Approve router to spend tokens
+token.approve(address(router), ethers.MaxUint256);
+```
+
+### Debugging Tips
+
+1. **Enable Verbose Logging**: Use console.log in contracts (Hardhat feature)
+2. **Check Gas Limits**: FHE operations require higher gas limits
+3. **Verify Mock Mode**: Ensure FHEVM is in mock mode for local testing
+4. **Inspect Events**: All operations emit detailed events for debugging
+5. **Use Hardhat Network**: Provides detailed error messages and stack traces
+
+### Getting Help
+
+If you encounter issues:
+1. Check existing [GitHub Issues](https://github.com/FHE-Swap/fheswap-contracts/issues)
+2. Review test files for usage examples
+3. Enable verbose logging and share output
+4. Provide complete error messages and stack traces
+
+---
+
+## 📊 Contract Metrics
+
+### Code Complexity
+
+| Contract | Lines | Functions | State Variables |
+|----------|-------|-----------|-----------------|
+| FHERouter | ~1,600 | 15+ | 10+ |
+| FHEPair | ~700 | 12+ | 15+ |
+| FHEFactory | ~400 | 10+ | 8+ |
+| ERC20Wrapper | ~300 | 8+ | 5+ |
+| WrapperFactory | ~200 | 5+ | 3+ |
+
+### Feature Coverage
+
+✅ **Fully Implemented** (100%)
+- Token wrapping/unwrapping
+- Liquidity provision
+- Token swaps
+- Slippage protection
+- Platform fees
+- Operator system
+- Refund mechanisms
+
+🚧 **Partial** (0%)
+- Frontend integration
+- Multi-hop routing
+- Governance
+
+❌ **Not Started** (0%)
+- Cross-chain bridges
+- Layer 2 deployment
+
+---
+
 ## 📞 Contact & Support
 
 - **GitHub Issues**: [Report bugs or request features](https://github.com/FHE-Swap/fheswap-contracts/issues)
