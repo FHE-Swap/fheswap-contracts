@@ -67,7 +67,11 @@ contract FHEFactory {
     
     // New: Query pairs by original tokens (optional, for convenience)
     mapping(address originalA => mapping(address originalB => address pair)) public getPairByOriginal;
-    
+
+    // Statistical tracking variables (non-critical)
+    uint256 public totalPairsCreated;          // Total number of pairs created
+    uint256 public lastPairCreationTime;       // Timestamp of last pair creation
+    mapping(address => uint256) public tokenPairCount;  // Count of pairs per token
 
     // ============ Events ============
     
@@ -169,6 +173,12 @@ contract FHEFactory {
 
         // Add pair address to all pairs list
         allPairs.push(pair);
+
+        // Update statistical tracking (non-critical)
+        totalPairsCreated++;
+        lastPairCreationTime = block.timestamp;
+        tokenPairCount[token0]++;
+        tokenPairCount[token1]++;
 
         // Emit PairCreated event
         emit PairCreated(token0, token1, pair, allPairs.length);
@@ -356,6 +366,59 @@ contract FHEFactory {
      */
     function getFeeConfig() external view returns (address _feeTo, uint16 _platformFeeBps) {
         return (feeTo, platformFeeBps);
+    }
+
+    // ============ Utility Functions (Non-critical) ============
+
+    /**
+     * @dev Get multiple pairs at once
+     * @param startIndex Starting index in allPairs array
+     * @param count Number of pairs to retrieve
+     * @return pairs Array of pair addresses
+     */
+    function getPairsBatch(uint256 startIndex, uint256 count) external view returns (address[] memory pairs) {
+        uint256 totalPairs = allPairs.length;
+        if (startIndex >= totalPairs) {
+            return new address[](0);
+        }
+
+        uint256 endIndex = startIndex + count;
+        if (endIndex > totalPairs) {
+            endIndex = totalPairs;
+        }
+
+        uint256 resultCount = endIndex - startIndex;
+        pairs = new address[](resultCount);
+
+        for (uint256 i = 0; i < resultCount; i++) {
+            pairs[i] = allPairs[startIndex + i];
+        }
+
+        return pairs;
+    }
+
+    /**
+     * @dev Get factory statistics
+     * @return total Total pairs created
+     * @return lastCreated Timestamp of last pair creation
+     * @return currentLength Current number of pairs
+     */
+    function getFactoryStats() external view returns (
+        uint256 total,
+        uint256 lastCreated,
+        uint256 currentLength
+    ) {
+        return (totalPairsCreated, lastPairCreationTime, allPairs.length);
+    }
+
+    /**
+     * @dev Check if a pair exists for given tokens
+     * @param tokenA First token address
+     * @param tokenB Second token address
+     * @return exists True if pair exists
+     */
+    function pairExists(address tokenA, address tokenB) external view returns (bool exists) {
+        return getPair[tokenA][tokenB] != address(0);
     }
 
 }
