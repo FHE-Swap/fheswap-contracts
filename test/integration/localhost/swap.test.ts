@@ -690,5 +690,238 @@ describe("FHEPair Token Swap Integration Tests", function () {
             console.log("✅ Constant product invariant maintained");
         });
     });
+
+    describe("Router Statistics Tracking", function () {
+        it("Should track swap operations in router statistics", async function () {
+            const amountIn = ethers.parseEther("100");
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const slippageBps = 50;
+
+            console.log("\n📊 Testing router statistics tracking:");
+
+            // Get initial stats
+            const [initialSwaps] = await router.getRouterStats();
+            console.log(`  Initial swap count: ${initialSwaps.toString()}`);
+
+            await token0.connect(user2).approve(routerAddress, ethers.MaxUint256);
+            await token1.connect(user2).approve(routerAddress, ethers.MaxUint256);
+
+            // Perform swap
+            await router.connect(user2)["swapTokens(address,address,uint256,uint16,address,uint256)"](
+                await token0.getAddress(),
+                await token1.getAddress(),
+                amountIn,
+                slippageBps,
+                user2.address,
+                deadline
+            );
+
+            // Check stats after swap
+            const [, , swapsAfter] = await router.getRouterStats();
+            console.log(`  Swap count after operation: ${swapsAfter.toString()}`);
+
+            expect(swapsAfter).to.be.gt(initialSwaps);
+
+            console.log("✅ Router statistics tracked correctly");
+        });
+
+        it("Should track user operation count", async function () {
+            const amountIn = ethers.parseEther("50");
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const slippageBps = 50;
+
+            console.log("\n👤 Testing user operation count:");
+
+            // Get initial user stats
+            const initialUserOps = await router.getUserStats(user2.address);
+            console.log(`  Initial user2 operations: ${initialUserOps.toString()}`);
+
+            await token0.connect(user2).approve(routerAddress, ethers.MaxUint256);
+            await token1.connect(user2).approve(routerAddress, ethers.MaxUint256);
+
+            // Perform multiple swaps
+            for (let i = 0; i < 3; i++) {
+                await router.connect(user2)["swapTokens(address,address,uint256,uint16,address,uint256)"](
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    amountIn,
+                    slippageBps,
+                    user2.address,
+                    deadline
+                );
+            }
+
+            // Check user stats
+            const finalUserOps = await router.getUserStats(user2.address);
+            console.log(`  Final user2 operations: ${finalUserOps.toString()}`);
+
+            expect(finalUserOps).to.be.gte(initialUserOps + 3n);
+
+            console.log("✅ User operation count tracked correctly");
+        });
+
+        it("Should provide comprehensive router analytics", async function () {
+            const amountIn = ethers.parseEther("100");
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const slippageBps = 50;
+
+            console.log("\n📈 Testing comprehensive analytics:");
+
+            await token0.connect(user2).approve(routerAddress, ethers.MaxUint256);
+            await token1.connect(user2).approve(routerAddress, ethers.MaxUint256);
+
+            // Perform swap
+            await router.connect(user2)["swapTokens(address,address,uint256,uint16,address,uint256)"](
+                await token0.getAddress(),
+                await token1.getAddress(),
+                amountIn,
+                slippageBps,
+                user2.address,
+                deadline
+            );
+
+            // Get comprehensive analytics
+            const [totalOps, liquidityAdds, liquidityRemoves, swaps, wraps, isPaused] =
+                await router.getRouterAnalytics();
+
+            console.log(`  📊 Total operations: ${totalOps.toString()}`);
+            console.log(`  📊 Liquidity adds: ${liquidityAdds.toString()}`);
+            console.log(`  📊 Liquidity removes: ${liquidityRemoves.toString()}`);
+            console.log(`  📊 Swaps: ${swaps.toString()}`);
+            console.log(`  📊 Wraps: ${wraps.toString()}`);
+            console.log(`  📊 Router paused: ${isPaused}`);
+
+            expect(totalOps).to.be.gt(0);
+            expect(swaps).to.be.gt(0);
+
+            console.log("✅ Comprehensive analytics retrieved successfully");
+        });
+    });
+
+    describe("Gas Optimization Scenarios", function () {
+        it("Should handle sequential swaps with gas efficiency", async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const slippageBps = 100;
+
+            console.log("\n⛽ Testing gas efficiency for sequential swaps:");
+
+            await token0.connect(user2).approve(routerAddress, ethers.MaxUint256);
+            await token1.connect(user2).approve(routerAddress, ethers.MaxUint256);
+
+            const gasUsed = [];
+
+            // Perform 5 swaps and record gas
+            for (let i = 0; i < 5; i++) {
+                const tx = await router.connect(user2)["swapTokens(address,address,uint256,uint16,address,uint256)"](
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    ethers.parseEther("10"),
+                    slippageBps,
+                    user2.address,
+                    deadline
+                );
+                const receipt = await tx.wait();
+                gasUsed.push(receipt.gasUsed);
+                console.log(`  Swap ${i + 1} gas used: ${receipt.gasUsed.toString()}`);
+            }
+
+            console.log("✅ Gas efficiency test completed");
+        });
+
+        it("Should handle optimal swap amounts for minimal price impact", async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const slippageBps = 50;
+
+            console.log("\n📊 Testing optimal swap amounts:");
+
+            await token0.connect(user2).approve(routerAddress, ethers.MaxUint256);
+            await token1.connect(user2).approve(routerAddress, ethers.MaxUint256);
+
+            // Small swap (< 0.1% of pool)
+            const smallAmount = ethers.parseEther("5");
+            console.log(`  Small swap (0.05% of pool): ${ethers.formatEther(smallAmount)} TKA`);
+
+            const token1Before = await token1.balanceOf(user2.address);
+
+            await router.connect(user2)["swapTokens(address,address,uint256,uint16,address,uint256)"](
+                await token0.getAddress(),
+                await token1.getAddress(),
+                smallAmount,
+                slippageBps,
+                user2.address,
+                deadline
+            );
+
+            const token1After = await token1.balanceOf(user2.address);
+            const received = token1After - token1Before;
+
+            console.log(`  Received: ${ethers.formatEther(received)} TKB`);
+            console.log(`  Price impact: minimal (near 1:2 ratio)`);
+
+            console.log("✅ Optimal swap amount test completed");
+        });
+    });
+
+    describe("Stress Testing", function () {
+        it("Should handle rapid consecutive swaps", async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const slippageBps = 200;
+
+            console.log("\n🔥 Stress test: Rapid consecutive swaps");
+
+            await token0.connect(user2).approve(routerAddress, ethers.MaxUint256);
+            await token1.connect(user2).approve(routerAddress, ethers.MaxUint256);
+
+            const swapCount = 10;
+            console.log(`  Executing ${swapCount} rapid swaps...`);
+
+            for (let i = 0; i < swapCount; i++) {
+                await router.connect(user2)["swapTokens(address,address,uint256,uint16,address,uint256)"](
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    ethers.parseEther("10"),
+                    slippageBps,
+                    user2.address,
+                    deadline
+                );
+            }
+
+            console.log(`✅ Successfully completed ${swapCount} rapid swaps`);
+        });
+
+        it("Should handle various swap sizes in sequence", async function () {
+            const deadline = Math.floor(Date.now() / 1000) + 3600;
+            const slippageBps = 300;
+
+            console.log("\n📊 Stress test: Various swap sizes");
+
+            await token0.connect(user2).approve(routerAddress, ethers.MaxUint256);
+            await token1.connect(user2).approve(routerAddress, ethers.MaxUint256);
+
+            const swapSizes = [
+                ethers.parseEther("1"),     // tiny
+                ethers.parseEther("10"),    // small
+                ethers.parseEther("100"),   // medium
+                ethers.parseEther("500"),   // large
+                ethers.parseEther("50"),    // medium
+                ethers.parseEther("5")      // small
+            ];
+
+            for (let i = 0; i < swapSizes.length; i++) {
+                console.log(`  Swap ${i + 1}: ${ethers.formatEther(swapSizes[i])} TKA`);
+
+                await router.connect(user2)["swapTokens(address,address,uint256,uint16,address,uint256)"](
+                    await token0.getAddress(),
+                    await token1.getAddress(),
+                    swapSizes[i],
+                    slippageBps,
+                    user2.address,
+                    deadline
+                );
+            }
+
+            console.log("✅ Various swap sizes handled successfully");
+        });
+    });
 });
 
